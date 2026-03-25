@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wb-transport-hack"
+version = "0.1.0"
+description = "WB Automated Transportation Dispatch System"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies =[
+    "polars>=1.0.0",
+    "numpy>=1.26.0",
+    "scipy>=1.13.0",
+    "scikit-learn>=1.4.0",
+    "catboost>=1.2.0",
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.29.0",
+    "pydantic>=2.6.0",
+    "pydantic-settings>=2.2.0",
+    "flet>=0.21.0",
+    "plotly>=5.20.0"
+]
+
+# Optional: aliases for easy script execution
+[project.scripts]
+train = "src.ml_pipeline.train:main"
+api = "src.backend.main:start"
