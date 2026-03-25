@@ -26,3 +26,11 @@ dependencies =[
 [project.scripts]
 train = "src.ml_pipeline.train:main"
 api = "src.backend.main:start"
+
+[tool.ruff]
+line-length = 120
+extend-exclude =["notebooks", "data", "models"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM"]
+ignore = ["F401"]

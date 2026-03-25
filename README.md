@@ -2,6 +2,7 @@
 
 ## File Structure
 
+```bash
 wb-transport-hack/
 ├── data/                               # Сырые данные (в .gitignore)
 │   ├── train_team_track.parquet
@@ -65,8 +66,12 @@ wb-transport-hack/
 ├── pyproject.toml                      # Современный манифест зависимостей
 ├── docker-compose.yml                  # Поднимает Backend (8080) и Frontend (8550)
 ├── Makefile                            # Алиасы (make train, make run-api, make submit)
-├── .gitignore
-└── README.md                           # Главная документация
+├── README.md                           # Главная документация
+├── .pre-commit-config.yaml
+├── .github/workflows/
+│   └── lint.yml
+└── .gitignore
+```
 
 ## Team Notes
 
