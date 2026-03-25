@@ -23,7 +23,8 @@ wb-transport-hack/
 │   ├── ml_pipeline/                    # Оффлайн-часть: ML и сабмиты
 │   │   ├── features.py                 # Извлечение статусов, генерация time-features
 │   │   ├── train_micro.py              # Обучение RegressorChain(CB + LGBM)
-│   │   ├── train_macro.py              # Обучает модель на дневных агрегациях + интеграции │   │   │                               # (погода, промо)
+│   │   ├── train_macro.py              # Обучает модель на дневных агрегациях + интеграции
+│   │   │                               # (погода, промо)
 │   │   ├── metrics.py                  # Функция WapePlusRbias и скрипт поиска k
 │   │   └── predict_submission.py       # Генерация submission.csv для лидерборда WB
 │   │
@@ -57,7 +58,8 @@ wb-transport-hack/
 │       ├── pages/                      # Экраны приложения
 │       │   ├── dashboard.py            # Графики: Прогноз притока грузов (Plotly)
 │       │   └── micro_dispatch.py       # Таблица: Сгенерированные рейсы и кнопка "Утвердить"
-│       │   └── macro_planning.py       # График прогноза потребности в ТС на неделю +  │       │                               # кнопка загрузки JSON-сценариев
+│       │   └── macro_planning.py       # График прогноза потребности в ТС на неделю +
+│       │                               # кнопка загрузки JSON-сценариев
 │       │
 │       └── components/                 # Переиспользуемые UI-элементы
 │           ├── tables.py               # Рендер датафреймов во Flet
