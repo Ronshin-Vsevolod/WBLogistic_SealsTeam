@@ -34,3 +34,6 @@ extend-exclude =["notebooks", "data", "models"]
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "SIM"]
 ignore = ["F401"]
+
+[tool.setuptools.packages.find]
+exclude = ["data*", "myenv*", "venv*", "env*"]
