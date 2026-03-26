@@ -1,9 +1,9 @@
-# LogistAutomation_Sealsteam
+# WBLogistic_SealsTeam
 
 ## File Structure
 
 ```bash
-wb-transport-hack/
+WBLogistic_SealsTeam/
 ├── data/                               # Сырые данные (в .gitignore)
 │   ├── train_team_track.parquet
 │   └── test_team_track.parquet
