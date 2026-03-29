@@ -34,7 +34,7 @@ myenv/
 # Jupyter Notebook
 .ipynb_checkpoints
 
-# Data & Models (ВАЖНО! Не пушить тяжелые файлы в гит)
+# Data & Models
 data/
 *.parquet
 *.csv
@@ -50,6 +50,15 @@ models/
 .vscode/
 *.swp
 *.swo
+*.iml
 
 # Configs
 .env
+
+# Java
+.gradle
+build/
+out/
+gradle-*-bin.zip
+bin/
+logs/

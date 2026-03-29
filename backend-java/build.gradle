@@ -1,0 +1,51 @@
+plugins {
+    id 'java'
+    id 'org.springframework.boot' version '3.5.13'
+    id 'io.spring.dependency-management' version '1.1.5'
+}
+
+group = 'com.wb'
+version = '0.1.0'
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_21
+    targetCompatibility = JavaVersion.VERSION_21
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    // Web: REST-контроллеры, Jackson для JSON
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+
+    // JPA: ORM для работы с PostgreSQL через сущности
+    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+
+    // Validation: @NotNull, @Min и т.д. в DTO
+    implementation 'org.springframework.boot:spring-boot-starter-validation'
+
+    // Flyway: версионирование схемы БД через SQL-миграции
+    implementation 'org.flywaydb:flyway-core'
+    implementation 'org.flywaydb:flyway-database-postgresql'
+
+    // PostgreSQL JDBC-драйвер (нужен только в рантайме)
+    runtimeOnly 'org.postgresql:postgresql'
+
+    // H2 — для локальной разработки и тестов
+    runtimeOnly 'com.h2database:h2'
+
+    // Lombok: генерация getter/setter/constructor чтобы entity-классы
+    // не раздувались на 200 строк бойлерплейта
+    compileOnly 'org.projectlombok:lombok'
+    annotationProcessor 'org.projectlombok:lombok'
+
+    // Тесты
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testRuntimeOnly 'com.h2database:h2'
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+}

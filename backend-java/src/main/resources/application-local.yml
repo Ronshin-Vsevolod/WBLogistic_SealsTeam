@@ -1,0 +1,28 @@
+# Профиль для локального тестирования без Docker и PostgreSQL.
+# H2 — встроенная in-memory БД, запускается вместе с приложением.
+spring:
+  datasource:
+    url: jdbc:h2:mem:wb_logistics;MODE=PostgreSQL
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+  jpa:
+    hibernate:
+      # create-drop: Hibernate сам создаёт таблицы (Flyway отключён)
+      ddl-auto: create-drop
+  flyway:
+    enabled: false
+  h2:
+    console:
+      enabled: true   # http://localhost:8080/h2-console
+
+app:
+  ml-service-url: http://mock
+
+logging:
+  level:
+    root: INFO
+    com.wb.logistics: DEBUG
+    org.springframework.web.filter.CommonsRequestLoggingFilter: DEBUG
+  pattern:
+    console: "%d{HH:mm:ss.SSS} %-5level [%thread] %logger{36} - %msg%n"

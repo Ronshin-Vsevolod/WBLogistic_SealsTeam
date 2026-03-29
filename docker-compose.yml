@@ -1,0 +1,53 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: wb_logistics
+      POSTGRES_USER: wb
+      POSTGRES_PASSWORD: secret
+    ports: ["5432:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wb -d wb_logistics"]
+      interval: 5s
+      retries: 5
+
+  # Python: ML-модели + Decision Engine
+  ml-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.ml
+    command: uvicorn src.backend_service.main:app --host 0.0.0.0 --port 8000
+    ports: ["8000:8000"]
+    volumes: ["./models:/app/models"]
+
+  # Java: персистентность + REST API
+  backend:
+    build: ./backend-java
+    ports: ["8080:8080"]
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: wb_logistics
+      DB_USER: wb
+      DB_PASS: secret
+      ML_SERVICE_URL: http://ml-service:8000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ml-service:
+        condition: service_started
+
+  # Flet: UI диспетчера (ходит в Java backend)
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.flet
+    command: flet run src/frontend_ui/app.py --port 8550
+    ports: ["8550:8550"]
+    environment:
+      API_BASE_URL: http://backend:8080/api/v1
+    depends_on: [backend]
+
+volumes:
+  pgdata:
