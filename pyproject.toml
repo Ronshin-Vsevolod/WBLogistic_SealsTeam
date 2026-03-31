@@ -19,7 +19,9 @@ dependencies =[
     "pydantic>=2.6.0",
     "pydantic-settings>=2.2.0",
     "flet>=0.21.0",
-    "plotly>=5.20.0"
+    "plotly>=5.20.0",
+    "lightgbm[scikit-learn]>= 4.6.0",
+    "pyarrow>=23.0.1"
 ]
 
 # Optional: aliases for easy script execution
