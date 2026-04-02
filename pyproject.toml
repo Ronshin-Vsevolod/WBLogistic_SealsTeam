@@ -21,8 +21,13 @@ dependencies =[
     "flet>=0.21.0",
     "plotly>=5.20.0",
     "lightgbm[scikit-learn]>= 4.6.0",
-    "pyarrow>=23.0.1"
+    "pyarrow>=23.0.1",
+    "pytest>=9.0.2"
 ]
+
+[tool.pytest.ini_options]
+pythonpath = ["metrics", "src", "."]
+testpaths = ["tests"]
 
 # Optional: aliases for easy script execution
 [project.scripts]

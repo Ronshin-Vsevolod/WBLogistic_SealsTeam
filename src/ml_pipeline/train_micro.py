@@ -1,164 +1,278 @@
-from metrics import WapePlusRbias
-from sklearn.model_selection import TimeSeriesSplit
-from sklearn.multioutput import RegressorChain
-from scipy.optimize import minimize
-import polars as pl
-from catboost import CatBoostRegressor
-from lightgbm import LGBMRegressor
-import numpy as np
-import json
-import joblib
 import os
 import gc
-import pathlib
+import json
+import joblib
+import polars as pl
+import numpy as np
+from scipy.optimize import minimize
+from sklearn.multioutput import RegressorChain
+from sklearn.model_selection import TimeSeriesSplit
+from catboost import CatBoostRegressor
+from lightgbm import LGBMRegressor
+import pandas as pd
+from .metrics import WapePlusRbias
 
 class ChainRegressorEnsemble:
+    """
+    An ensemble of Regressor Chains using CatBoost and LightGBM for multi-step
+    time series forecasting, with built-in calibration and cross-validation.
 
-    def __init__(self, df: pl.DataFrame) -> None:
+    Parameters
+    ----------
+    df : pl.DataFrame
+        Input dataset containing features, timestamps, and the base target.
+    config : dict, optional
+        Configuration dictionary for hyperparameters, seeds, and training mode.
+        If None, default production parameters are used.
+    """
 
-        self.cat_features = [df.get_column_index('route_id')]
+    def __init__(self, df: pl.DataFrame, config: dict | None = None):
+        self.df = df
+        self.config = config or {}
+        
+        # Extract config with fallbacks
+        self.seed = self.config.get("seed", 42)
+        self.mode = self.config.get("mode", "chain")  # "chain" or "catboost_multi"
+        self.test_size = self.config.get("test_size", 10000)
+        self.n_splits = self.config.get("n_splits", 3)
+        
+        self.target_col = "target_2h"
+        self.horizon = 10
+        self.model_dir = "models"
+        
+        # Feature trackers
+        self.target_cols = []
+        self.feature_cols = []
+        self.cat_features = ["route_id", "office_from_id"]
+        self.cat_indices = []
 
-        self.model_catboost = CatBoostRegressor(
-            iterations=200,
-            depth=4,
-            learning_rate=1e-1,
-            loss_function="RMSE", task_type="CPU",
-            allow_writing_files=False, used_ram_limit='7gb',
-            verbose=False, thread_count=-1  
-        )
-        self.model_lightgbm = LGBMRegressor(n_estimators=200,
-            max_depth=4, learning_rate=1e-1, verbose=-1,
-            objective="regression", n_jobs=-1, importance_type='gain'
-        )
-        self.df: pl.DataFrame = df.with_columns([
-                pl.col(pl.Float64).cast(pl.Float32),
-                pl.col(pl.Int64).cast(pl.Int32)
-            ])
+        # State
+        self.best_k = np.ones(self.horizon, dtype=np.float32)
+        
+        self.metric: WapePlusRbias = WapePlusRbias()
 
-        self.X, self.y = self._split_feat_target()
+        # Initialize processing
+        self._prepare_data()
+        self._build_targets()
+        
+    def evaluate(self) -> dict:
+        """
+        Run time-series cross-validation, compute raw scores, and optimize
+        the calibration vector k.
 
-    def _split_feat_target(self) -> tuple:
-        df_sorted_by_timestamp_and_route_id = self.df.sort(
-            by=["timestamp", "route_id"], descending=False
-        )
+        Returns
+        -------
+        dict
+            A dictionary containing:
+            - oof_score (float): Raw WAPE + Rbias on OOF predictions.
+            - oof_score_calibrated (float): Calibrated WAPE + Rbias.
+            - best_k (np.ndarray): Optimized multipliers of shape (10,).
+        """
+        print(f"Starting evaluation in '{self.mode}' mode...")
+        
+        X = self._get_feature_matrix()
+        y = self.df.select(self.target_cols).to_numpy()
+        
+        min_required = self.test_size * self.n_splits
+        assert len(X) > min_required, f"Dataset size {len(X)} too small for {self.n_splits} splits of size {self.test_size}"
 
-        df_with_targets = df_sorted_by_timestamp_and_route_id.with_columns([pl.col("route_id").cast(pl.String).cast(pl.Categorical),
-            *[
-                pl.col("target_2h").shift(-i).over("route_id").alias(f"target_route_{i}")
-                for i in range(1, 10)
-            ]
-            ]
-        ).drop_nulls()
-
-        X = df_with_targets.select(
-            pl.all().exclude(
-                ["timestamp", "target_2h"]
-                + [f"target_route_{i}" for i in range(1, 10)]
-            )
-        )
-        y = df_with_targets.select(
-            pl.col(["target_2h"] + [f"target_route_{i}" for i in range(1, 10)])
-        )
-
-        return X.to_pandas(), y.to_pandas()
-
-    def get_oof_predictions(self):
-        tcv = TimeSeriesSplit(n_splits=2, test_size=10000, gap=0)
-        all_y_true, all_y_pred = [], []
-
-        for train_index, val_index in tcv.split(self.X, self.y):
-            X_train, y_train = self.X.iloc[train_index], self.y.iloc[train_index]
-            X_val, y_val = self.X.iloc[val_index], self.y.iloc[val_index]
-
-            chain_cat = RegressorChain(
-                base_estimator=self.model_catboost, random_state=42
-            )
-            chain_lgbm = RegressorChain(
-                base_estimator=self.model_lightgbm, random_state=42
-            )
-
-            chain_cat.fit(X_train, y_train, 
-                          cat_features=self.cat_features)
-            chain_lgbm.fit(X_train, y_train)
-
-            pred_cat = chain_cat.predict(X_val)
-            pred_lgbm = chain_lgbm.predict(X_val)
-
-            pred_ensemble = (pred_cat + pred_lgbm) / 2.0
-
-            all_y_true.append(y_val.to_numpy())
-            all_y_pred.append(pred_ensemble)
+        tscv = TimeSeriesSplit(n_splits=self.n_splits, test_size=self.test_size)
+        
+        oof_true = []
+        oof_pred = []
+        
+        for fold, (train_idx, val_idx) in enumerate(tscv.split(X)):
+            X_train, y_train = X.iloc[train_idx], y[train_idx]
+            X_val, y_val = X.iloc[val_idx], y[val_idx]
             
-            del X_train, y_train
+            # Fit and predict for the fold
+            models = self._fit_fold(X_train, y_train)
+            y_fold_pred = self._predict_ensemble(models, X_val)
+            
+            oof_true.append(y_val)
+            oof_pred.append(y_fold_pred)
+            
+            del models, X_train, y_train, X_val, y_val
             gc.collect()
+            
+        oof_true = np.vstack(oof_true)
+        oof_pred = np.vstack(oof_pred)
+        
+        # Calculate scores
+        raw_score = self.metric.calculate(oof_true, oof_pred)
+        
+        # Optimize K
+        self.best_k = self._optimize_k(oof_true, oof_pred)
+        
+        # Calibrate and recalculate
+        oof_pred_calibrated = oof_pred * self.best_k
+        calibrated_score = self.metric.calculate(oof_true, oof_pred_calibrated)
+        
+        return {
+            "oof_score": float(raw_score),
+            "oof_score_calibrated": float(calibrated_score),
+            "best_k": self.best_k
+        }
 
-        return np.vstack(all_y_true), np.vstack(all_y_pred)
+    def train_full_save(self, best_k: np.ndarray) -> None:
+        """
+        Train the model on the full dataset and save artifacts to disk.
 
-    def find_best_k(self, y_true, y_pred):
-        print("Optimizing multipliers with scipy.optimize...")
-        metric_calculator = WapePlusRbias()
+        Parameters
+        ----------
+        best_k : np.ndarray
+            The optimal multiplier vector of shape (10,) obtained from evaluate().
+        """
+        X = self._get_feature_matrix()
+        y = self.df.select(self.target_cols).to_numpy()
+        
+        models = self._fit_fold(X, y)
+        
+        os.makedirs(self.model_dir, exist_ok=True)
+        
+        # Save models based on mode
+        if self.mode == "chain":
+            chain_cat, chain_lgbm = models
+            joblib.dump(chain_cat, os.path.join(self.model_dir, "micro_chain_catboost.cbm"))
+            joblib.dump(chain_lgbm, os.path.join(self.model_dir, "micro_chain_lightgbm.txt"))
+        else:
+            cat_multi = models[0]
+            joblib.dump(cat_multi, os.path.join(self.model_dir, "micro_multi_catboost.cbm"))
+            
+        # Save k multipliers
+        k_dict = {f"k_{i}": float(val) for i, val in enumerate(best_k)}
+        with open(os.path.join(self.model_dir, "best_k_multiplier.json"), "w") as f:
+            json.dump(k_dict, f, indent=2)
 
-        # Целевая функция для Nelder-Mead (ищем 10 коэффициентов)
-        def objective(k_arr):
-            # Умножаем каждый из 10 шагов на свой коэффициент k
-            calibrated_pred = y_pred * k_arr
-            return metric_calculator.calculate(y_true, calibrated_pred)
+    def _prepare_data(self) -> None:
+        """
+        Convert data types for memory optimization and strictly cast categoricals.
+        """
+        # Type casting Polars DataFrame for numericals
+        self.df = self.df.with_columns([
+            pl.col(pl.Float64).cast(pl.Float32),
+            pl.col(pl.Int64).cast(pl.Int32)
+        ])
+        
+        for col in self.cat_features:
+            if col in self.df.columns:
+                self.df = self.df.with_columns(
+                    pl.col(col).cast(pl.String).cast(pl.Categorical)
+                )
+        
+        # Sort by timestamp and route
+        self.df = self.df.sort(["timestamp", "route_id"])
+        gc.collect()
 
-        initial_k = np.ones(10)  # Начинаем с единиц
-        res = minimize(
-            objective, initial_k, method="Nelder-Mead", options={"maxiter": 100}
-        )
-        print(f"Optimal k found: {res.x}")
+    def _build_targets(self) -> None:
+        """
+        Generate 10-step horizon targets, drop timestamp, and isolate valid feature columns.
+        """
+        self.target_cols = []
+        shifts = []
+        
+        for i in range(1, self.horizon + 1):
+            col_name = f"target_step_{i}" if i > 1 else "target_2h_t1"
+            shifts.append(
+                pl.col(self.target_col).shift(-i).over("route_id").alias(col_name)
+            )
+            self.target_cols.append(col_name)
+            
+        self.df = self.df.with_columns(shifts).drop_nulls(subset=self.target_cols)
+        
+        # Как ты и просил — дропаем timestamp после сортировки и генерации
+        if "timestamp" in self.df.columns:
+            self.df = self.df.drop("timestamp")
+        
+        # Определяем фичи (timestamp уже удален, так что в исключениях только таргеты)
+        excluded_cols = {self.target_col} | set(self.target_cols)
+        self.feature_cols = [c for c in self.df.columns if c not in excluded_cols]
+        
+        # Индексы категориальных фичей
+        self.cat_indices = [
+            i for i, col in enumerate(self.feature_cols) if col in self.cat_features
+        ]
+        
+        print(f"Target construction complete. Feature count: {len(self.feature_cols)}")
+
+
+    def _fit_fold(self, X: pd.DataFrame, y: np.ndarray) -> tuple:
+        """
+        Train models using fit_params to avoid Scikit-Learn cloning errors.
+        """
+        # Define common fit parameters for categoricals
+        fit_params = {}
+        if self.cat_indices:
+            # CatBoost uses 'cat_features', LightGBM uses 'categorical_feature'
+            fit_params_cb = {"cat_features": self.cat_indices}
+            fit_params_lgbm = {"categorical_feature": self.cat_indices}
+        else:
+            fit_params_cb = {}
+            fit_params_lgbm = {}
+
+        if self.mode == "catboost_multi":
+            model = CatBoostRegressor(
+            loss_function="MultiRMSE",
+            random_seed=self.seed,
+            verbose=False, allow_writing_files=False
+            )
+            model.fit(X, y, **fit_params_cb)
+            return (model,)
+        
+        elif self.mode == "chain":
+            # 1. CatBoost Chain
+            base_cat = CatBoostRegressor(
+            loss_function="MAE",
+            random_seed=self.seed,
+            verbose=False, allow_writing_files=False
+            )
+            # RegressorChain clones base_cat; passing cat_features in fit() avoids the error
+            chain_cat = RegressorChain(base_cat, random_state=self.seed)
+            chain_cat.fit(X, y, **fit_params_cb)
+        
+            # 2. LightGBM Chain
+            base_lgbm = LGBMRegressor(
+                objective="mae",
+                random_state=self.seed,
+                verbose=-1
+            )
+            chain_lgbm = RegressorChain(base_lgbm, random_state=self.seed)
+            chain_lgbm.fit(X, y, **fit_params_lgbm)
+        
+            return chain_cat, chain_lgbm
+
+    def _get_feature_matrix(self) -> pd.DataFrame:
+        """
+        Extract features safely preserving categorical dtypes through Pandas.
+        """
+        df_pd = self.df.select(self.feature_cols).to_pandas()
+        
+        for col in self.cat_features:
+            if col in df_pd.columns:
+                df_pd[col] = df_pd[col].astype("category")
+                
+        return df_pd
+
+
+    def _predict_ensemble(self, models: tuple, X: np.ndarray) -> np.ndarray:
+        """
+        Generate predictions using the trained ensemble.
+        """
+        if self.mode == "catboost_multi":
+            return models[0].predict(X)
+            
+        elif self.mode == "chain":
+            pred_cat = models[0].predict(X)
+            pred_lgbm = models[1].predict(X)
+            return (pred_cat + pred_lgbm) / 2.0
+    def _optimize_k(self, y_true: np.ndarray, y_pred: np.ndarray) -> np.ndarray:
+        """
+        Find the optimal calibration vector 'k' using Nelder-Mead.
+        """
+        def objective(k):
+            calibrated = y_pred * k
+            return self.metric.calculate(y_true, calibrated)
+
+        initial_k = np.ones(self.horizon, dtype=np.float32)
+        res = minimize(objective, initial_k, method="Nelder-Mead")
         return res.x
-
-    def train_final_and_save(self, best_k: np.ndarray):
-        os.makedirs("models", exist_ok=True)
-
-        chain_cat = RegressorChain(
-            base_estimator=self.model_catboost, random_state=42
-        )
-        chain_lgbm = RegressorChain(
-            base_estimator=self.model_lightgbm, random_state=42
-        )
-
-        print("Training final models on full dataset...")
-        chain_cat.fit(self.X, self.y, cat_features=self.cat_features,)
-        chain_lgbm.fit(self.X, self.y)
-
-        # Внимание: переименовал по ТЗ!
-        joblib.dump(chain_cat, "models/micro_chain_catboost.cbm")
-        joblib.dump(chain_lgbm, "models/micro_chain_lightgbm.txt")
-
-        k_dict = {f"k_{i}": float(best_k[i]) for i in range(10)}
-        with open("models/best_k_multiplier.json", "w") as f:
-            json.dump(k_dict, f, indent=4)
-
-        print("All artifacts saved successfully!")
-
-
-''' problem with bad allocation 
-SCRIPT EXAMPLE
-
-base_pth  = base_path = pathlib.Path(__file__).parent.parent.parent
-file_path = base_path / "data" / "train_team_track.parquet"
-
-
-time_series_df = pl.read_parquet(file_path)
-ensemble = ChainRegressorEnsemble(time_series_df)
-metric = WapePlusRbias()
-# 1. Получаем OOF предсказания
-y_true, y_pred = ensemble.get_oof_predictions()
-
-oof = metric.calculate(y_true, y_pred)
-
-print(f"WAPE + Rbias oof: {oof:.5f}\n")
-# 2. Оптимизируем веса k
-best_k = ensemble.find_best_k(y_true, y_pred)
-
-
-calibrated_y_pred = y_pred * best_k
-oof_score_after = metric.calculate(y_true, calibrated_y_pred)
-print(f"After calibration: {oof_score_after:.5f}\n")
-# 3. Сохраняем модели и коэффициенты
-ensemble.train_final_and_save(best_k)
-'''
