@@ -30,7 +30,6 @@ class ChainRegressorEnsemble:
         self.df = df
         self.config = config or {}
         
-        # Extract config with fallbacks
         self.seed = self.config.get("seed", 42)
         self.mode = self.config.get("mode", "chain")  # "chain" or "catboost_multi"
         self.test_size = self.config.get("test_size", 10000)
@@ -39,19 +38,17 @@ class ChainRegressorEnsemble:
         self.target_col = "target_2h"
         self.horizon = 10
         self.model_dir = "models"
-        
-        # Feature trackers
+
         self.target_cols = []
         self.feature_cols = []
         self.cat_features = ["route_id", "office_from_id"]
         self.cat_indices = []
 
-        # State
         self.best_k = np.ones(self.horizon, dtype=np.float32)
         
         self.metric: WapePlusRbias = WapePlusRbias()
 
-        # Initialize processing
+
         self._prepare_data()
         self._build_targets()
         
@@ -85,7 +82,6 @@ class ChainRegressorEnsemble:
             X_train, y_train = X.iloc[train_idx], y[train_idx]
             X_val, y_val = X.iloc[val_idx], y[val_idx]
             
-            # Fit and predict for the fold
             models = self._fit_fold(X_train, y_train)
             y_fold_pred = self._predict_ensemble(models, X_val)
             
@@ -97,14 +93,11 @@ class ChainRegressorEnsemble:
             
         oof_true = np.vstack(oof_true)
         oof_pred = np.vstack(oof_pred)
-        
-        # Calculate scores
+
         raw_score = self.metric.calculate(oof_true, oof_pred)
-        
-        # Optimize K
+
         self.best_k = self._optimize_k(oof_true, oof_pred)
         
-        # Calibrate and recalculate
         oof_pred_calibrated = oof_pred * self.best_k
         calibrated_score = self.metric.calculate(oof_true, oof_pred_calibrated)
         
@@ -129,8 +122,7 @@ class ChainRegressorEnsemble:
         models = self._fit_fold(X, y)
         
         os.makedirs(self.model_dir, exist_ok=True)
-        
-        # Save models based on mode
+
         if self.mode == "chain":
             chain_cat, chain_lgbm = models
             joblib.dump(chain_cat, os.path.join(self.model_dir, "micro_chain_catboost.cbm"))
@@ -139,7 +131,6 @@ class ChainRegressorEnsemble:
             cat_multi = models[0]
             joblib.dump(cat_multi, os.path.join(self.model_dir, "micro_multi_catboost.cbm"))
             
-        # Save k multipliers
         k_dict = {f"k_{i}": float(val) for i, val in enumerate(best_k)}
         with open(os.path.join(self.model_dir, "best_k_multiplier.json"), "w") as f:
             json.dump(k_dict, f, indent=2)
@@ -148,7 +139,7 @@ class ChainRegressorEnsemble:
         """
         Convert data types for memory optimization and strictly cast categoricals.
         """
-        # Type casting Polars DataFrame for numericals
+
         self.df = self.df.with_columns([
             pl.col(pl.Float64).cast(pl.Float32),
             pl.col(pl.Int64).cast(pl.Int32)
@@ -159,8 +150,7 @@ class ChainRegressorEnsemble:
                 self.df = self.df.with_columns(
                     pl.col(col).cast(pl.String).cast(pl.Categorical)
                 )
-        
-        # Sort by timestamp and route
+
         self.df = self.df.sort(["timestamp", "route_id"])
         gc.collect()
 
@@ -180,15 +170,12 @@ class ChainRegressorEnsemble:
             
         self.df = self.df.with_columns(shifts).drop_nulls(subset=self.target_cols)
         
-        # Как ты и просил — дропаем timestamp после сортировки и генерации
         if "timestamp" in self.df.columns:
             self.df = self.df.drop("timestamp")
         
-        # Определяем фичи (timestamp уже удален, так что в исключениях только таргеты)
         excluded_cols = {self.target_col} | set(self.target_cols)
         self.feature_cols = [c for c in self.df.columns if c not in excluded_cols]
         
-        # Индексы категориальных фичей
         self.cat_indices = [
             i for i, col in enumerate(self.feature_cols) if col in self.cat_features
         ]
@@ -200,10 +187,9 @@ class ChainRegressorEnsemble:
         """
         Train models using fit_params to avoid Scikit-Learn cloning errors.
         """
-        # Define common fit parameters for categoricals
+
         fit_params = {}
         if self.cat_indices:
-            # CatBoost uses 'cat_features', LightGBM uses 'categorical_feature'
             fit_params_cb = {"cat_features": self.cat_indices}
             fit_params_lgbm = {"categorical_feature": self.cat_indices}
         else:
@@ -220,17 +206,15 @@ class ChainRegressorEnsemble:
             return (model,)
         
         elif self.mode == "chain":
-            # 1. CatBoost Chain
             base_cat = CatBoostRegressor(
             loss_function="MAE",
             random_seed=self.seed,
             verbose=False, allow_writing_files=False
             )
-            # RegressorChain clones base_cat; passing cat_features in fit() avoids the error
+
             chain_cat = RegressorChain(base_estimator=base_cat, random_state=self.seed)
             chain_cat.fit(X, y, **fit_params_cb)
         
-            # 2. LightGBM Chain
             base_lgbm = LGBMRegressor(
                 objective="mae",
                 random_state=self.seed,
