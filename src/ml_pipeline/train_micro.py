@@ -227,7 +227,7 @@ class ChainRegressorEnsemble:
             verbose=False, allow_writing_files=False
             )
             # RegressorChain clones base_cat; passing cat_features in fit() avoids the error
-            chain_cat = RegressorChain(base_cat, random_state=self.seed)
+            chain_cat = RegressorChain(base_estimator=base_cat, random_state=self.seed)
             chain_cat.fit(X, y, **fit_params_cb)
         
             # 2. LightGBM Chain
@@ -236,10 +236,13 @@ class ChainRegressorEnsemble:
                 random_state=self.seed,
                 verbose=-1
             )
-            chain_lgbm = RegressorChain(base_lgbm, random_state=self.seed)
+            chain_lgbm = RegressorChain(base_estimator=base_lgbm, random_state=self.seed)
             chain_lgbm.fit(X, y, **fit_params_lgbm)
         
-            return chain_cat, chain_lgbm
+            return (chain_cat, chain_lgbm)
+        
+        else:
+            raise ValueError(f"Mode {self.mode} doesn't exist only catboost_multi or chain are supported")
 
     def _get_feature_matrix(self) -> pd.DataFrame:
         """
@@ -265,6 +268,9 @@ class ChainRegressorEnsemble:
             pred_cat = models[0].predict(X)
             pred_lgbm = models[1].predict(X)
             return (pred_cat + pred_lgbm) / 2.0
+        
+        else:
+            raise ValueError(f"Mode {self.mode} doesn't exist only catboost_multi or chain are supported")
     def _optimize_k(self, y_true: np.ndarray, y_pred: np.ndarray) -> np.ndarray:
         """
         Find the optimal calibration vector 'k' using Nelder-Mead.

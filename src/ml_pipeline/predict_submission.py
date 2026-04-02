@@ -3,6 +3,7 @@ import json
 import numpy as np
 import polars as pl
 
+
 # Пути к файлам из вашего ТЗ
 MODEL_DIR = "models"
 CAT_PATH = f"{MODEL_DIR}/micro_chain_catboost.cbm"
@@ -72,3 +73,9 @@ def create_submission_polars(test_df, preds_cat, preds_lgbm, best_k, submission_
     print(f"Submission saved to: {submission_path}")
     
     return final_submission
+
+# Little script example
+test_df = pl.read_parquet("data/test_team_track.parquet")
+preds_cat = model_cat.predict(test_df)
+preds_lgbm = model_lgbm.predict(test_df)
+final = create_submission_polars(test_df, preds_cat, preds_lgbm, best_k, "submission.csv")
