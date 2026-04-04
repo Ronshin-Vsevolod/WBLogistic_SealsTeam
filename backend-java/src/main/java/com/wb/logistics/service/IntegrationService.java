@@ -13,7 +13,7 @@ import java.util.List;
  * В продакшне каждый метод — HTTP-вызов к реальному API:
  *   - Яндекс.Погода → microWeatherHourly, macroWeatherDaily
  *   - Яндекс.Пробки → traffic
- *   - CRM/ERP       → promoWeekly
+ *   - CRM/ERP       → promo
  *
  * Сейчас возвращает фиксированные правдоподобные данные.
  * Для демо этого достаточно — показываем, что архитектура
@@ -46,7 +46,7 @@ public class IntegrationService {
     // ── Заглушки (каждая — будущая точка подключения реального API) ──
 
     /**
-     * STUB: Погода по часам на 6 часов вперёд.
+     * STUB: Погода по часам на 5 часов вперёд.
      * В продакшне: GET https://api.weather.yandex.ru/v2/forecast?hours=6
      */
     private List<Double> fetchMicroWeather(String warehouseId) {

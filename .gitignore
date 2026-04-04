@@ -62,3 +62,7 @@ out/
 gradle-*-bin.zip
 bin/
 logs/
+
+# Other
+*.egg-info/
+data/feature_logs/

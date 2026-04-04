@@ -1,0 +1,101 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: wb-postgres-smoke
+    environment:
+      POSTGRES_DB: wb_logistics
+      POSTGRES_USER: wb
+      POSTGRES_PASSWORD: wb
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wb -d wb_logistics"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+  ml-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.ml
+    container_name: wb-ml-service-smoke
+    environment:
+      FEATURE_LOGGING_ENABLED: "true"
+      FEATURE_LOG_DIR: /app/data/feature_logs
+      SETTINGS_PATH: /app/config/settings.yaml
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./config:/app/config:ro
+      - ./data/feature_logs:/app/data/feature_logs
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2).read()"
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  backend-java:
+    build:
+      context: ./backend-java
+      dockerfile: Dockerfile
+    container_name: wb-java-backend-smoke
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ml-service:
+        condition: service_healthy
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/wb_logistics
+      SPRING_DATASOURCE_USERNAME: wb
+      SPRING_DATASOURCE_PASSWORD: wb
+      APP_ML_SERVICE_URL: http://ml-service:8000
+    ports:
+      - "8080:8080"
+
+  smoke:
+    image: curlimages/curl:8.7.1
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ml-service:
+        condition: service_healthy
+      backend-java:
+        condition: service_started
+    entrypoint: ["/bin/sh", "-ec"]
+    command: |
+      set -e
+      set -x
+      echo "[smoke] waiting for java..."
+      until curl -sS http://backend-java:8080/ >/dev/null 2>&1; do
+        sleep 2
+      done
+
+      echo "[smoke] POST /api/v1/ingest-data"
+      curl -f -X POST http://backend-java:8080/api/v1/ingest-data \
+        -H "Content-Type: application/json" \
+        -d '{
+          "officeFromId": 42,
+          "routeId": 101,
+          "timestamp": 1718438400000,
+          "status1": 10,
+          "status2": 20,
+          "status3": 30,
+          "status4": 40,
+          "status5": 50,
+          "status6": 60,
+          "status7": 70,
+          "status8": 80
+        }'
+
+      echo "[smoke] GET /api/v1/schedule?warehouseId=42"
+      curl -f "http://backend-java:8080/api/v1/schedule?warehouseId=42"
+
+      echo "[smoke] OK"

@@ -1,0 +1,18 @@
+# ── Micro-forecast settings ────────────────────────────────────
+micro_step_minutes: 30        # length of one micro time-step
+micro_horizon_steps: 10        # how many micro steps to forecast
+
+# ── Dispatch defaults ──────────────────────────────────────────
+truck_capacity: 30.0          # default truck capacity (tonnes)
+base_sla_hours: 4.0          # default SLA window
+
+# ── Vehicle fleet ──────────────────────────────────────────────
+standard_vehicle_type: "20t_truck"
+
+vehicle_catalog:
+  20t_truck:
+    capacity: 30.0
+  10t_truck:
+    capacity: 15.0
+  van:
+    capacity: 5.0

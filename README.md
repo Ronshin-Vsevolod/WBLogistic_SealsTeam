@@ -4,71 +4,119 @@
 
 ```bash
 WBLogistic_SealsTeam/
-├── data/                               # Сырые данные (в .gitignore)
+├── data/                                    # Сырые данные (.gitignore)
 │   ├── train_team_track.parquet
 │   └── test_team_track.parquet
 │
-├── models/                             # Сохраненные веса (в .gitignore)
-│   ├── ensemble_chain_catboost.cbm     # Модель 1: Цепной CatBoost
-│   ├── ensemble_chain_lightgbm.txt     # Модель 2: Цепной LightGBM
-│   ├── macro_daily_prophet.pkl         # Модель 3: Prophet
-│   └── best_k_multiplier.json          # Тот самый коэффициент для метрики
+├── models/                                  # Веса моделей (.gitignore)
+│   ├── ensemble_chain_catboost.cbm
+│   ├── ensemble_chain_lightgbm.txt
+│   ├── macro_daily_prophet.pkl
+│   └── best_k_multiplier.json
 │
-├── config/                             # Вся конфигурация системы
-│   ├── settings.yaml                   # Бизнес-правила (SLA_HOURS=6, TRUCK_CAPACITY=30)
-│   ├── logging.yaml                    # Настройки логирования
-│   └── .env.example                    # Шаблон портов и хостов
+├── config/                                  # Конфигурация Python-части
+│   ├── settings.yaml
+│   ├── logging.yaml
+│   └── .env.example
 │
-├── src/                                # Исходный код системы
-│   ├── ml_pipeline/                    # Оффлайн-часть: ML и сабмиты
-│   │   ├── features.py                 # Извлечение статусов, генерация time-features
-│   │   ├── train_micro.py              # Обучение RegressorChain(CB + LGBM)
-│   │   ├── train_macro.py              # Обучает модель на дневных агрегациях + интеграции
-│   │   │                               # (погода, промо)
-│   │   ├── metrics.py                  # Функция WapePlusRbias и скрипт поиска k
-│   │   └── predict_submission.py       # Генерация submission.csv для лидерборда WB
+├── src/
+│   ├── ml_pipeline/                         # Оффлайн: обучение моделей
+│   │   ├── features.py
+│   │   ├── train_micro.py
+│   │   ├── train_macro.py
+│   │   ├── metrics.py
+│   │   └── predict_submission.py
 │   │
-│   ├── backend_service/                # Веб-сервис Автовызова ТС (FastAPI)
-│   │   ├── main.py                     # Точка входа (uvicorn)
-│   │   │
-│   │   ├── integrations/
-│   │   │   └── external_adapters.py    # Скрипты трансформации внешних JSON в наши фичи
-│   │   │
+│   ├── backend_service/                     # Python FastAPI: ML + Decision Engine
+│   │   ├── main.py                          #   uvicorn, POST /predict
 │   │   ├── api/
-│   │   │   ├── routers.py              # Эндпоинты: POST /trigger-dispatch, GET /schedule
-│   │   │   └── schemas.py              # Pydantic-схемы валидации API
-│   │   │
+│   │   │   ├── routers.py                   #   POST /predict (вызывается Java)
+│   │   │   └── schemas.py                   #   Pydantic-схемы
 │   │   ├── core/
-│   │   │   ├── config.py               # Читает .env и settings.yaml через Pydantic Settings
-│   │   │   └── exceptions.py           # Кастомные обработчики ошибок API
+│   │   │   ├── config.py
+│   │   │   ├── exceptions.py
+│   │   │   └── feature_logger.py
 │   │   │
-│   │   └── engine/                     # Ядро бизнес-логики (Decision Engine)
-│   │       ├── forecaster_micro.py     # Загружает .pkl модели, делает инференс 10 шагов
-│   │       ├── forecaster_macro.py     # Инференс на 7 дней (принимает внешние факторы)
-│   │       ├── sla_monitor.py          # Трекает "виртуальный возраст" невывезенного груза
-│   │       └── auto_dispatcher.py      # Квантование объемов -> генерация заявок ТС
+│   │   └── engine/
+│   │       ├── forecaster_micro.py          #   Инференс micro (10 шагов)
+│   │       ├── forecaster_macro.py          #   Инференс macro (7 дней)
+│   │       ├── sla_monitor.py               #   FIFO-буфер + SLA
+│   │       └── auto_dispatcher.py           #   Прогноз → заявки
 │   │
-│   └── frontend_ui/                    # Интерфейс диспетчера (Flet)
-│       ├── app.py                      # Инициализация Flet, роутинг страниц
-│       ├── api_client.py               # Класс для HTTP-запросов к FastAPI
-│       │
-│       ├── pages/                      # Экраны приложения
-│       │   ├── micro_dispatch.py       # Таблица: Сгенерированные рейсы
-│       │   └── macro_planning.py       # График прогноза потребности в ТС на неделю +
-│       │                               # "кнопка" загрузки JSON-сценариев
-│       │
-│       └── components/                 # Переиспользуемые UI-элементы
-│           ├── tables.py               # Рендер датафреймов во Flet
-│           └── charts.py               # Обертки над графиками
+│   └── frontend_ui/                         # Flet UI
+│       ├── app.py
+│       ├── api_client.py                    #   HTTP → Java :8080 (НЕ Python)
+│       ├── pages/
+│       │   ├── micro_dispatch.py
+│       │   └── macro_planning.py
+│       └── components/
+│           ├── tables.py
+│           └── charts.py
 │
-├── pyproject.toml                      # Современный манифест зависимостей
-├── docker-compose.yml                  # Поднимает Backend (8080) и Frontend (8550)
-├── Makefile                            # Алиасы (make train, make run-api, make submit)
-├── README.md                           # Главная документация
-├── .pre-commit-config.yaml
-├── .github/workflows/
-│   └── lint.yml
-└── .gitignore
+├── backend-java/                            # Java Spring Boot: БД + REST API
+│   ├── build.gradle
+│   ├── settings.gradle
+│   ├── gradle.properties                    #   org.gradle.java.home=...
+│   ├── Dockerfile
+│   ├── src/main/
+│   │   ├── java/com/wb/logistics/
+│   │   │   ├── WbLogisticsApplication.java
+│   │   │   ├── config/
+│   │   │   │   ├── AppProperties.java
+│   │   │   │   ├── CorsConfig.java
+│   │   │   │   ├── HttpLoggingConfig.java
+│   │   │   │   └── LocalProfile.java       #   Мок ML для автономного теста
+│   │   │   ├── entity/
+│   │   │   │   ├── Dispatch.java
+│   │   │   │   ├── DispatchStatus.java
+│   │   │   │   └── TacticalPlanEntry.java
+│   │   │   ├── repository/
+│   │   │   │   ├── DispatchRepository.java
+│   │   │   │   └── TacticalPlanRepository.java
+│   │   │   ├── dto/
+│   │   │   │   ├── IngestRequest.java
+│   │   │   │   ├── IntegrationData.java     #   Погода/пробки/промо
+│   │   │   │   ├── DispatchDto.java
+│   │   │   │   ├── StatusUpdateRequest.java
+│   │   │   │   ├── TacticalPlanDto.java
+│   │   │   │   ├── ScheduleResponse.java
+│   │   │   │   └── ml/
+│   │   │   │       ├── MlPredictionRequest.java   # Данные + интеграции
+│   │   │   │       └── MlPredictionResponse.java
+│   │   │   ├── mapper/
+│   │   │   │   └── DispatchMapper.java
+│   │   │   ├── client/
+│   │   │   │   └── MlServiceClient.java
+│   │   │   ├── service/
+│   │   │   │   ├── IngestService.java
+│   │   │   │   ├── IntegrationService.java  #   Заглушки внешних API
+│   │   │   │   ├── DispatchService.java
+│   │   │   │   └── TacticalPlanService.java
+│   │   │   ├── controller/
+│   │   │   │   ├── IngestController.java    #   POST /api/v1/ingest-data
+│   │   │   │   ├── ScheduleController.java  #   GET  /api/v1/schedule
+│   │   │   │   └── DispatchController.java  #   GET/PATCH /api/v1/dispatch
+│   │   │   └── exception/
+│   │   │       ├── ResourceNotFoundException.java
+│   │   │       ├── MlServiceException.java
+│   │   │       └── GlobalExceptionHandler.java
+│   │   └── resources/
+│   │       ├── application.yml
+│   │       ├── application-local.yml        #   H2 + отключённый Flyway
+│   │       └── db/migration/
+│   │           ├── V1__create_dispatches.sql
+│   │           └── V2__create_tactical_plan.sql
+│   └── src/test/
+│       └── java/com/wb/logistics/            #   (будущие тесты)
+│
+├── docker-compose.yml                       # postgres + ml-service + backend + frontend
+├── Dockerfile.ml                            # Python ML-сервис
+├── pyproject.toml
+├── Makefile
+├── README.md
+├── .gitignore
+└── .github/workflows/
+    └── lint.yml
 ```
 
 ## Team Notes

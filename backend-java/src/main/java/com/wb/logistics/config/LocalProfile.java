@@ -54,7 +54,7 @@ public class LocalProfile {
                                 new BigDecimal("30"), new BigDecimal("0.95"),
                                 "CAPACITY_FULL", 2),
                         new MlDispatch(wh, req.routeId(), now.plusSeconds(3600),
-                                "small_van", new BigDecimal("4.2"),
+                                "van", new BigDecimal("4.2"),
                                 new BigDecimal("5"), new BigDecimal("0.84"),
                                 "SLA_PREEMPTIVE", 1)
                 );
