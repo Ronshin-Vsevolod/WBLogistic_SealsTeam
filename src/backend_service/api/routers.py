@@ -17,8 +17,6 @@ from __future__ import annotations
 import logging
 import time
 from datetime import date, datetime
-from dataclasses import dataclass, field
-from functools import lru_cache
 
 from fastapi import APIRouter, BackgroundTasks
 from pydantic import BaseModel, ConfigDict, Field
@@ -31,12 +29,7 @@ from backend_service.engine.auto_dispatcher import (
     generate_dispatches,
     build_tactical_plan,
 )
-from backend_service.api.schemas import (
-    ForecastRequest,
-    ForecastResponse,
-    DispatchEntry,
-    TacticalPlanEntry,
-)
+from backend_service.api.schemas import ForecastRequest
 from backend_service.core.config import get_settings
 from backend_service.core.feature_logger import get_feature_logger
 
@@ -76,63 +69,6 @@ class PredictResponse(BaseModel):
 
     dispatches: list[_DispatchItem]
     tactical_plan: list[_TacticalPlanItem] = Field(alias="tacticalPlan")
-
-
-# ═══════════════════════════════════════════════════════════════════
-#  Pipeline settings (integrates with existing config layer)
-# ═══════════════════════════════════════════════════════════════════
-
-
-@dataclass
-class _PipelineSettings:
-    """Settings consumed by the forecast → dispatch pipeline.
-
-    Defaults match the values used throughout the test-suite and the
-    Java integration contract.  When the project's config loader is
-    available, values are read from it instead.
-    """
-
-    micro_horizon_steps: int = 24
-    micro_step_minutes: int = 30
-    truck_capacity: float = 100.0
-    base_sla_hours: float = 24.0
-    standard_vehicle_type: str = "standard_truck"
-    vehicle_catalog: list = field(default_factory=lambda: [
-        {"type": "small_van", "capacity": 50.0},
-        {"type": "standard_truck", "capacity": 100.0},
-        {"type": "large_truck", "capacity": 200.0},
-    ])
-
-
-@lru_cache(maxsize=1)
-def _get_settings() -> _PipelineSettings:
-    """Resolve pipeline settings — cached after the first call.
-
-    Attempts to load from the project's ``backend_service.config``
-    module.  Falls back to built-in defaults so the service is fully
-    self-contained for testing and local development.
-    """
-    try:
-        from backend_service.config import get_settings as _load  # type: ignore[import-untyped]
-
-        raw = _load()
-        return _PipelineSettings(
-            micro_horizon_steps=getattr(raw, "micro_horizon_steps", 24),
-            micro_step_minutes=getattr(raw, "micro_step_minutes", 30),
-            truck_capacity=getattr(raw, "truck_capacity", 100.0),
-            base_sla_hours=getattr(raw, "base_sla_hours", 24.0),
-            standard_vehicle_type=getattr(
-                raw, "standard_vehicle_type", "standard_truck",
-            ),
-            vehicle_catalog=getattr(
-                raw,
-                "vehicle_catalog",
-                _PipelineSettings().vehicle_catalog,
-            ),
-        )
-    except (ImportError, Exception):          # noqa: BLE001
-        return _PipelineSettings()
-
 
 # ═══════════════════════════════════════════════════════════════════
 #  Internal helpers — request unpacking & response mapping
