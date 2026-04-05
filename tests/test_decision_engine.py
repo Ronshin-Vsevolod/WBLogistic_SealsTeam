@@ -299,93 +299,6 @@ class TestMicroForecaster:
         assert r1 == r2
 
 
-
-# ═══════════════════════════════════════════════════════════════════
-#  Macro forecaster
-# ═══════════════════════════════════════════════════════════════════
-
-
-class TestMacroForecaster:
-    def test_returns_seven_values(self):
-        result = predict_macro(_STATUSES, _MACRO_WEATHER, _PROMO)
-        assert len(result.daily_forecast) == 7
-
-    def test_values_non_negative(self):
-        result = predict_macro(_STATUSES, _MACRO_WEATHER, _PROMO)
-        assert all(v >= 0.0 for v in result.daily_forecast)
-
-    def test_returns_macro_daily_baseline(self):
-        result = predict_macro(_STATUSES, _MACRO_WEATHER, _PROMO)
-        assert isinstance(result.macro_daily_baseline, float)
-        assert result.macro_daily_baseline >= 0.0
-
-    def test_reacts_to_changed_weather(self):
-        r1 = predict_macro(_STATUSES, [0.0] * 7, _PROMO)
-        r2 = predict_macro(_STATUSES, [10.0] * 7, _PROMO)
-        assert r1.daily_forecast != r2.daily_forecast
-
-    def test_reacts_to_changed_promo(self):
-        r1 = predict_macro(_STATUSES, _MACRO_WEATHER, [0.0] * 7)
-        r2 = predict_macro(_STATUSES, _MACRO_WEATHER, [1.0] * 7)
-        assert r1.daily_forecast != r2.daily_forecast
-
-    def test_deterministic(self):
-        r1 = predict_macro(_STATUSES, _MACRO_WEATHER, _PROMO)
-        r2 = predict_macro(_STATUSES, _MACRO_WEATHER, _PROMO)
-        assert r1.daily_forecast == r2.daily_forecast
-        assert r1.macro_daily_baseline == r2.macro_daily_baseline
-
-
-# ═══════════════════════════════════════════════════════════════════
-#  Micro forecaster
-# ═══════════════════════════════════════════════════════════════════
-
-
-def _micro(**overrides):
-    """Call predict_micro with defaults, overriding selected args."""
-    kwargs = dict(
-        statuses=_STATUSES,
-        micro_weather=_MICRO_WEATHER,
-        traffic=_TRAFFIC,
-        macro_daily_baseline=_MACRO_BASELINE,
-        micro_horizon_steps=_MICRO_HORIZON,
-        micro_step_minutes=_MICRO_STEP_MIN,
-    )
-    kwargs.update(overrides)
-    return predict_micro(**kwargs)
-
-
-class TestMicroForecaster:
-    def test_returns_exact_horizon_steps(self):
-        result = _micro()
-        assert len(result) == _MICRO_HORIZON
-
-    def test_horizon_not_derived_from_micro_weather_len(self):
-        arbitrary_horizon = 36
-        result = _micro(micro_horizon_steps=arbitrary_horizon)
-        assert len(result) == arbitrary_horizon
-        assert len(result) != len(_MICRO_WEATHER) * 2
-
-    def test_values_non_negative(self):
-        result = _micro()
-        assert all(v >= 0.0 for v in result)
-
-    def test_reacts_to_changed_traffic(self):
-        r1 = _micro(traffic=0.0)
-        r2 = _micro(traffic=1.0)
-        assert r1 != r2
-
-    def test_reacts_to_changed_micro_weather(self):
-        r1 = _micro(micro_weather=[0.0, 0.0, 0.0, 0.0, 0.0])
-        r2 = _micro(micro_weather=[5.0, 10.0, 15.0, 10.0, 5.0])
-        assert r1 != r2
-
-    def test_deterministic(self):
-        r1 = _micro()
-        r2 = _micro()
-        assert r1 == r2
-
-
 # ═══════════════════════════════════════════════════════════════════
 #  Shared defaults — Decision Engine
 # ═══════════════════════════════════════════════════════════════════
@@ -427,12 +340,163 @@ class TestCapacityThreshold:
         assert cap[0].fill_rate == 1.0
 
     def test_emits_multiple_dispatches_for_large_buffer(self):
-        # Single step of 250 → two full-load dispatches, 50 leftover
+        # Single step of 250 → two full-load dispatches, leftover remains buffered
+        # because the stricter early tail-clear trigger should NOT fire here.
         result = _dispatches(micro_forecast=[250.0])
+
         cap = [d for d in result if d.trigger_reason == "CAPACITY_FULL"]
+
         assert len(cap) == 2
         assert all(d.expected_volume == _TRUCK_CAPACITY for d in cap)
         assert all(d.fill_rate == 1.0 for d in cap)
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  No-demand-before-SLA behaviour
+# ═══════════════════════════════════════════════════════════════════
+
+
+class TestNoDemandBeforeSLA:
+    def test_emits_tail_clear_when_no_volume_before_sla_deadline(self):
+        result = _dispatches(
+            micro_forecast=[150.0, 0.0, 0.0, 0.0],
+            settings=Settings(
+                micro_step_minutes=30,
+                micro_horizon_steps=10,
+                truck_capacity=_TRUCK_CAPACITY,
+                base_sla_hours=2.0,   # SLA = 120 min; fully covered by horizon
+                standard_vehicle_type=_STANDARD_VEHICLE,
+                vehicle_catalog=_VEHICLE_CATALOG,
+            ),
+        )
+
+        cap = [d for d in result if d.trigger_reason == "CAPACITY_FULL"]
+        tail = [d for d in result if d.trigger_reason == "NO_DEMAND_BEFORE_SLA"]
+
+        assert len(cap) == 1
+        assert cap[0].expected_volume == 100.0
+
+        assert len(tail) == 1
+        assert tail[0].expected_volume == 50.0
+        assert tail[0].vehicle_type == "van"
+        assert tail[0].vehicle_capacity == 50.0
+        assert tail[0].fill_rate == 1.0
+        assert tail[0].priority == 2
+
+        total_dispatched = sum(d.expected_volume for d in result)
+        assert total_dispatched == 150.0
+
+    def test_does_not_tail_clear_if_positive_volume_exists_before_sla(self):
+        result = _dispatches(
+            micro_forecast=[150.0, 0.0, 10.0, 0.0],
+            settings=Settings(
+                micro_step_minutes=30,
+                micro_horizon_steps=10,
+                truck_capacity=_TRUCK_CAPACITY,
+                base_sla_hours=2.0,
+                standard_vehicle_type=_STANDARD_VEHICLE,
+                vehicle_catalog=_VEHICLE_CATALOG,
+            ),
+        )
+
+        cap = [d for d in result if d.trigger_reason == "CAPACITY_FULL"]
+        tail = [d for d in result if d.trigger_reason == "NO_DEMAND_BEFORE_SLA"]
+
+        assert len(cap) == 1
+        assert len(tail) == 0
+
+    def test_does_not_tail_clear_if_sla_is_outside_forecast_horizon(self):
+        result = _dispatches(
+            micro_forecast=[150.0, 0.0, 0.0],
+            settings=Settings(
+                micro_step_minutes=30,
+                micro_horizon_steps=10,
+                truck_capacity=_TRUCK_CAPACITY,
+                base_sla_hours=2.0,   # from step 0 need 3 future steps, but only 2 exist
+                standard_vehicle_type=_STANDARD_VEHICLE,
+                vehicle_catalog=_VEHICLE_CATALOG,
+            ),
+        )
+
+        cap = [d for d in result if d.trigger_reason == "CAPACITY_FULL"]
+        tail = [d for d in result if d.trigger_reason == "NO_DEMAND_BEFORE_SLA"]
+
+        assert len(cap) == 1
+        assert len(tail) == 0
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  No-demand-before-SLA behaviour
+# ═══════════════════════════════════════════════════════════════════
+
+
+class TestNoDemandBeforeSLA:
+    def test_emits_tail_clear_when_no_volume_before_sla_deadline(self):
+        result = _dispatches(
+            micro_forecast=[150.0, 0.0, 0.0, 0.0],
+            settings=Settings(
+                micro_step_minutes=30,
+                micro_horizon_steps=10,
+                truck_capacity=_TRUCK_CAPACITY,
+                base_sla_hours=2.0,
+                standard_vehicle_type=_STANDARD_VEHICLE,
+                vehicle_catalog=_VEHICLE_CATALOG,
+            ),
+        )
+
+        cap = [d for d in result if d.trigger_reason == "CAPACITY_FULL"]
+        tail = [d for d in result if d.trigger_reason == "NO_DEMAND_BEFORE_SLA"]
+
+        assert len(cap) == 1
+        assert cap[0].expected_volume == 100.0
+
+        assert len(tail) == 1
+        assert tail[0].expected_volume == 50.0
+        assert tail[0].vehicle_type == "van"
+        assert tail[0].vehicle_capacity == 50.0
+        assert tail[0].fill_rate == 1.0
+        assert tail[0].priority == 2
+
+        total_dispatched = sum(d.expected_volume for d in result)
+        assert total_dispatched == 150.0
+
+    def test_does_not_tail_clear_if_positive_volume_exists_before_sla(self):
+        result = _dispatches(
+            micro_forecast=[150.0, 0.0, 10.0, 0.0],
+            settings=Settings(
+                micro_step_minutes=30,
+                micro_horizon_steps=10,
+                truck_capacity=_TRUCK_CAPACITY,
+                base_sla_hours=2.0,
+                standard_vehicle_type=_STANDARD_VEHICLE,
+                vehicle_catalog=_VEHICLE_CATALOG,
+            ),
+        )
+
+        cap = [d for d in result if d.trigger_reason == "CAPACITY_FULL"]
+        tail = [d for d in result if d.trigger_reason == "NO_DEMAND_BEFORE_SLA"]
+
+        assert len(cap) == 1
+        assert len(tail) == 0
+
+    def test_does_not_tail_clear_if_sla_is_outside_forecast_horizon(self):
+        result = _dispatches(
+            micro_forecast=[150.0, 0.0, 0.0],
+            settings=Settings(
+                micro_step_minutes=30,
+                micro_horizon_steps=10,
+                truck_capacity=_TRUCK_CAPACITY,
+                base_sla_hours=2.0,
+                standard_vehicle_type=_STANDARD_VEHICLE,
+                vehicle_catalog=_VEHICLE_CATALOG,
+            ),
+        )
+
+        cap = [d for d in result if d.trigger_reason == "CAPACITY_FULL"]
+        tail = [d for d in result if d.trigger_reason == "NO_DEMAND_BEFORE_SLA"]
+
+        assert len(cap) == 1
+        assert len(tail) == 0
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -475,33 +539,6 @@ class TestSLABreach:
         total_dispatched = sum(d.expected_volume for d in result)
         assert total_dispatched == 40.0
 
-"""
-Моя хотелка (как я думаю будет лучше), чтобы при виде micro_forecast=[150.0, 0.0 и дальше много нулей] логика не ждала истечения времени SLA, понимая бессмысленность ожидания и наличия ТС под остаток.
-Сделаю позже.
-    def test_does_not_leave_overdue_residue(self):
-        # 150 units at SLA trigger with max vehicle = 100
-        # engine must send enough vehicles to cover ALL 150
-        small_catalog = {
-            "small": VehicleSpec(capacity=50.0),
-            "medium": VehicleSpec(capacity=100.0),
-        }
-        result = _dispatches(
-            micro_forecast=[150.0, 0.0],
-            settings=Settings(
-                micro_step_minutes=30,
-                micro_horizon_steps=10,
-                truck_capacity=_TRUCK_CAPACITY,
-                base_sla_hours=1.0,
-                standard_vehicle_type="medium",
-                vehicle_catalog=small_catalog,
-            ),
-        )
-        sla = [d for d in result if d.trigger_reason == "SLA_BREACH"]
-        total_sla_volume = sum(d.expected_volume for d in sla)
-        assert total_sla_volume == 150.0
-        assert len(sla) >= 2            # needs more than one vehicle
-        assert all(0.0 <= d.fillRate <= 1.0 for d in sla)
-"""
 
 # ═══════════════════════════════════════════════════════════════════
 #  Horizon-end behaviour

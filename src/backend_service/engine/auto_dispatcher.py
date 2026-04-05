@@ -76,6 +76,38 @@ def _select_vehicle(
     vehicle_type, spec = sorted_catalog[-1]
     return vehicle_type, float(spec.capacity)
 
+def _append_variable_vehicle_dispatches(
+    dispatches: list[DispatchRequest],
+    office_from_id: int,
+    route_id: int,
+    scheduled_at: datetime,
+    volume: float,
+    trigger_reason: str,
+    priority: int,
+    vehicle_catalog: dict[str, object],
+) -> None:
+    """Dispatch *volume* using best-fit vehicles from the catalog."""
+    remaining = volume
+
+    while remaining > 0.0:
+        vehicle_type, cap = _select_vehicle(remaining, vehicle_catalog)
+        dispatched = min(remaining, cap)
+        fill = dispatched / cap if cap > 0.0 else 0.0
+
+        dispatches.append(DispatchRequest(
+            warehouse_id=str(office_from_id),
+            route_id=route_id,
+            scheduled_at=scheduled_at,
+            vehicle_type=vehicle_type,
+            expected_volume=round(dispatched, 4),
+            vehicle_capacity=cap,
+            fill_rate=round(min(fill, 1.0), 4),
+            trigger_reason=trigger_reason,
+            priority=priority,
+        ))
+        remaining -= dispatched
+
+
 # ── Core dispatch generation ────────────────────────────────────────
 
 
@@ -143,7 +175,10 @@ def generate_dispatches(
 
         # ── Rule 2: capacity-threshold dispatch ─────────────────
         standard_capacity = vehicle_catalog[standard_vehicle_type].capacity
+        had_capacity_dispatch = False
+
         while buffer >= truck_capacity:
+            had_capacity_dispatch = True
             dispatches.append(DispatchRequest(
                 warehouse_id=str(office_from_id),
                 route_id=route_id,
@@ -162,31 +197,48 @@ def generate_dispatches(
             buffer = 0.0
             wait_minutes = 0.0
 
-        # ── Rule 4: SLA-breach dispatch ─────────────────────────
-        if wait_minutes >= sla_minutes and buffer > 0.0:
-            remaining = buffer
-            while remaining > 0.0:
-                vehicle_type, cap = _select_vehicle(remaining, vehicle_catalog)
-                dispatched = min(remaining, cap)
-                fill = dispatched / cap if cap > 0.0 else 0.0
+        # ── Rule 4: early tail-clear only if SLA window is fully visible
+        #            and no additional demand is expected before SLA ───
+        if had_capacity_dispatch and buffer > 0.0 and wait_minutes < sla_minutes:
+            remaining_minutes_to_sla = sla_minutes - wait_minutes
+            steps_until_sla = math.ceil(remaining_minutes_to_sla / micro_step_minutes)
 
-                dispatches.append(DispatchRequest(
-                    warehouse_id=str(office_from_id),
+            future_until_sla = micro_forecast[
+                step_idx + 1: step_idx + 1 + steps_until_sla
+            ]
+            horizon_covers_sla = len(future_until_sla) == steps_until_sla
+            has_positive_before_sla = any(v > 0.0 for v in future_until_sla)
+
+            if horizon_covers_sla and not has_positive_before_sla:
+                _append_variable_vehicle_dispatches(
+                    dispatches=dispatches,
+                    office_from_id=office_from_id,
                     route_id=route_id,
                     scheduled_at=scheduled_at,
-                    vehicle_type=vehicle_type,
-                    expected_volume=round(dispatched, 4),
-                    vehicle_capacity=cap,
-                    fill_rate=round(min(fill, 1.0), 4),
-                    trigger_reason="SLA_BREACH",
-                    priority=1,
-                ))
-                remaining -= dispatched
+                    volume=buffer,
+                    trigger_reason="NO_DEMAND_BEFORE_SLA",
+                    priority=2,
+                    vehicle_catalog=vehicle_catalog,
+                )
+                buffer = 0.0
+                wait_minutes = 0.0
+                continue
 
+        # ── Rule 5: SLA-breach dispatch ─────────────────────────
+        if wait_minutes >= sla_minutes and buffer > 0.0:
+            _append_variable_vehicle_dispatches(
+                dispatches=dispatches,
+                office_from_id=office_from_id,
+                route_id=route_id,
+                scheduled_at=scheduled_at,
+                volume=buffer,
+                trigger_reason="SLA_BREACH",
+                priority=1,
+                vehicle_catalog=vehicle_catalog,
+            )
             buffer = 0.0
             wait_minutes = 0.0
 
-    # ── Rule 5: NO artificial horizon-end dispatch ──────────────
     return dispatches
 
 
