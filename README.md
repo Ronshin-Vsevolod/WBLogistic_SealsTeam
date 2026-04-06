@@ -21,7 +21,7 @@ WBLogistic_SealsTeam/
 │
 ├── src/
 │   ├── ml_pipeline/                         # Оффлайн: обучение моделей
-│   │   ├── features.py
+│   │   ├── features.py                      # Извлечение статусов, генерация time-features
 │   │   ├── train_micro.py                   # CLI/скрипт оффлайн-обучения micro-модели
 │   │   ├── train_macro.py                   # CLI/скрипт оффлайн-обучения macro-модели
 │   │   ├── metrics.py

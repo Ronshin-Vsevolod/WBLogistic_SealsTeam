@@ -9,7 +9,7 @@ import org.springframework.web.bind.annotation.*;
 import java.util.UUID;
 
 /**
- * Рейсы создаются АВТОМАТИЧЕСКИ через IngestService (ML → БД).
+ * Рейсы создаются автоматически через IngestService (ML → БД).
  * Диспетчер может только просматривать и менять статус.
  */
 @RestController

@@ -47,6 +47,7 @@ class TacticalPlanRow:
     forecast_volume: float
     required_trucks: int
 
+
 # ── Vehicle selection (config-driven) ───────────────────────────────
 
 
@@ -117,8 +118,20 @@ def generate_dispatches(
     timestamp: int,
     micro_forecast: list[float],
     settings: Settings,
+    micro_forecast_upper: list[float] | None = None,
 ) -> list[DispatchRequest]:
     """Convert a micro forecast into concrete dispatch requests.
+
+    Business rules implemented:
+    1. Rolling buffer accumulation across micro forecast steps.
+    2. Capacity-threshold dispatch (CAPACITY_FULL): triggers when
+       buffer >= truck_capacity.
+    3. Waiting-time handling: resets only when buffer is empty.
+    4. Early tail-clear (NO_FILL_BEFORE_SLA): triggers if the pessimistic
+       upper bound of future demand cannot fill a standard truck before SLA.
+    5. SLA-breach dispatch (SLA_BREACH): fully covers all overdue volume.
+
+    Vehicle selection is fully config-driven.
 
     Parameters
     ----------
@@ -129,33 +142,27 @@ def generate_dispatches(
     timestamp:
         Request timestamp (ISO-8601 UTC, trailing ``Z``).
     micro_forecast:
-        Intra-day volume forecast (length = ``micro_horizon_steps``).
-    micro_step_minutes:
-        Duration of one forecast step in minutes (from config).
-    truck_capacity:
-        Capacity of the standard vehicle — also serves as the
-        capacity-threshold trigger level.
-    base_sla_hours:
-        Maximum acceptable waiting time before an SLA-breach dispatch
-        is forced.
-    standard_vehicle_type:
-        Name / label of the standard vehicle used for capacity-
-        threshold dispatches (from config, **not** hard-coded).
-    vehicle_catalog:
-        List of ``{"type": str, "capacity": float}`` dicts
-        describing all available vehicle types (from config).
+        Intra-day expected volume forecast (mean), length = ``micro_horizon_steps``.
+    settings:
+        Pipeline configuration (capacities, SLA, steps).
+    micro_forecast_upper:
+        Upper bound of the forecast. Used to confidently decide if waiting
+        for more volume before the SLA deadline is mathematically futile.
+        Defaults to `micro_forecast` if not provided.
 
     Returns
     -------
     list[DispatchRequest]
-        Zero or more dispatch instructions.  No artificial
-        ``HORIZON_END`` dispatch is ever emitted.
+        Zero or more dispatch instructions. No artificial ``HORIZON_END``
+        dispatch is ever emitted.
     """
     micro_step_minutes = settings.micro_step_minutes
     truck_capacity = settings.truck_capacity
     base_sla_hours = settings.base_sla_hours
     standard_vehicle_type = settings.standard_vehicle_type
     vehicle_catalog = settings.vehicle_catalog
+
+    forecast_upper = micro_forecast_upper if micro_forecast_upper is not None else micro_forecast
 
     base_dt = datetime.fromtimestamp(timestamp / 1000.0, tz=timezone.utc)
     sla_minutes = base_sla_hours * 60.0
@@ -165,15 +172,11 @@ def generate_dispatches(
     wait_minutes = 0.0
 
     for step_idx, step_volume in enumerate(micro_forecast):
-        # ── Rule 1: rolling buffer ──────────────────────────────
         buffer += step_volume
         wait_minutes += micro_step_minutes
 
-        scheduled_at = _format_scheduled_at(
-            base_dt, step_idx, micro_step_minutes,
-        )
+        scheduled_at = _format_scheduled_at(base_dt, step_idx, micro_step_minutes)
 
-        # ── Rule 2: capacity-threshold dispatch ─────────────────
         standard_capacity = vehicle_catalog[standard_vehicle_type].capacity
         had_capacity_dispatch = False
 
@@ -192,31 +195,26 @@ def generate_dispatches(
             ))
             buffer -= truck_capacity
 
-        # ── Rule 3: waiting-time handling ───────────────────────
         if buffer <= 0.0:
             buffer = 0.0
             wait_minutes = 0.0
 
-        # ── Rule 4: early tail-clear only if SLA window is fully visible
-        #            and no additional demand is expected before SLA ───
         if had_capacity_dispatch and buffer > 0.0 and wait_minutes < sla_minutes:
             remaining_minutes_to_sla = sla_minutes - wait_minutes
             steps_until_sla = math.ceil(remaining_minutes_to_sla / micro_step_minutes)
 
-            future_until_sla = micro_forecast[
-                step_idx + 1: step_idx + 1 + steps_until_sla
-            ]
-            horizon_covers_sla = len(future_until_sla) == steps_until_sla
-            has_positive_before_sla = any(v > 0.0 for v in future_until_sla)
+            future_upper_until_sla = forecast_upper[step_idx + 1 : step_idx + 1 + steps_until_sla]
+            horizon_covers_sla = len(future_upper_until_sla) == steps_until_sla
+            needed_to_full = truck_capacity - buffer
 
-            if horizon_covers_sla and not has_positive_before_sla:
+            if horizon_covers_sla and sum(future_upper_until_sla) < needed_to_full:
                 _append_variable_vehicle_dispatches(
                     dispatches=dispatches,
                     office_from_id=office_from_id,
                     route_id=route_id,
                     scheduled_at=scheduled_at,
                     volume=buffer,
-                    trigger_reason="NO_DEMAND_BEFORE_SLA",
+                    trigger_reason="NO_FILL_BEFORE_SLA",
                     priority=2,
                     vehicle_catalog=vehicle_catalog,
                 )
@@ -224,7 +222,6 @@ def generate_dispatches(
                 wait_minutes = 0.0
                 continue
 
-        # ── Rule 5: SLA-breach dispatch ─────────────────────────
         if wait_minutes >= sla_minutes and buffer > 0.0:
             _append_variable_vehicle_dispatches(
                 dispatches=dispatches,

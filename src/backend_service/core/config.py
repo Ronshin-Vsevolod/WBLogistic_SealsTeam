@@ -58,8 +58,20 @@ class Settings(BaseModel):
             "20t_truck": VehicleSpec(capacity=30.0),
         },
     )
+    micro_uncertainty_profile: list[float] = Field(
+        default_factory=lambda: [0.0] * 10
+    )
 
     # ── field validators ─────────────────────────────────────────
+
+    @field_validator("micro_uncertainty_profile")
+    @classmethod
+    def _uncertainty_profile_valid(cls, v: list[float]) -> list[float]:
+        if not v:
+            raise ValueError("micro_uncertainty_profile must not be empty")
+        if any(x < 0 for x in v):
+            raise ValueError("micro_uncertainty_profile must contain only non-negative values")
+        return v
 
     @field_validator("micro_step_minutes")
     @classmethod

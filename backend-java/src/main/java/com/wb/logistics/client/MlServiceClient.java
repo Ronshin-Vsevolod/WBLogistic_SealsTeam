@@ -16,8 +16,7 @@ import java.time.Duration;
 /**
  * HTTP-клиент для вызова Python ML-сервиса.
  *
- * Использует Spring RestClient (Spring Boot 3.2+) —
- * современный типобезопасный HTTP-клиент.
+ * Использует Spring RestClient (Spring Boot 3.2+)
  */
 @Component
 @Profile("!local")

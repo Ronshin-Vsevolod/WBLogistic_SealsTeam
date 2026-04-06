@@ -76,7 +76,6 @@ public class IntegrationService {
      * В продакшне: GET https://erp.internal/api/promo?warehouse=...
      */
     private List<Double> fetchPromo(String warehouseId) {
-        // Нет активных промо
         return List.of(2.0, 1.0, 1.0, 3.0, 2.0, 1.0, 1.0);
     }
 }

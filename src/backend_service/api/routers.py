@@ -117,14 +117,16 @@ def _background_log_inference(
     response: PredictResponse,
     macro_daily_baseline: float,
     daily_forecast: list[float],
-    micro_forecast: list[float],
+    micro_forecast_mean: list[float],
+    micro_forecast_lower: list[float],
+    micro_forecast_upper: list[float],
     inference_ms: float,
 ) -> None:
     """Background task: serialise and persist the inference payload.
-
-    Runs in the default thread-pool executor — does **not** block
-    the event loop.  All exceptions are caught internally; the API
-    response is long gone by the time this executes.
+    
+    Captures intermediate pipeline state (macro baseline, and the full 
+    micro forecast distributions: mean, lower, upper) that is invisible 
+    in the public API contract. This is critical for offline ML analysis.
     """
     try:
         fl = get_feature_logger()
@@ -138,6 +140,13 @@ def _background_log_inference(
             },
             inference_duration_ms=inference_ms,
         )
+        pipeline_state={
+                "macro_daily_baseline": macro_daily_baseline,
+                "daily_forecast": daily_forecast,
+                "micro_forecast_mean": micro_forecast_mean,
+                "micro_forecast_lower": micro_forecast_lower,
+                "micro_forecast_upper": micro_forecast_upper,
+            },
     except Exception:
         logger.warning("Feature logging background task failed", exc_info=True)
 
@@ -179,18 +188,24 @@ async def predict(
         statuses=statuses,
         macro_weather=request.integrations.macro_weather,
         promo=request.integrations.promo,
+        timestamp=request.timestamp,
+        runtime_mode="auto",
     )
     # macro_result.macro_daily_baseline is internal pipeline state
     # and must NOT appear in the public response.
 
     # ── 2. Micro forecast ───────────────────────────────────────
-    micro_forecast = predict_micro(
+    micro_result = predict_micro(
         statuses=statuses,
         micro_weather=request.integrations.micro_weather,
         traffic=request.integrations.traffic,
         macro_daily_baseline=macro_result.macro_daily_baseline,
         micro_horizon_steps=settings.micro_horizon_steps,
         micro_step_minutes=settings.micro_step_minutes,
+        timestamp=request.timestamp,
+        office_from_id=request.office_from_id,
+        route_id=request.route_id,
+        runtime_mode="auto",
     )
 
     # ── 3. Dispatch generation ──────────────────────────────────
@@ -198,7 +213,8 @@ async def predict(
         office_from_id=request.office_from_id,
         route_id=request.route_id,
         timestamp=request.timestamp,
-        micro_forecast=micro_forecast,
+        micro_forecast=micro_result.mean,
+        micro_forecast_upper=micro_result.upper,
         settings=settings,
     )
 
@@ -226,8 +242,11 @@ async def predict(
         response=response,
         macro_daily_baseline=macro_result.macro_daily_baseline,
         daily_forecast=macro_result.daily_forecast,
-        micro_forecast=micro_forecast,
+        micro_forecast_mean=micro_result.mean,
+        micro_forecast_lower=micro_result.lower,
+        micro_forecast_upper=micro_result.upper,
         inference_ms=inference_ms,
     )
+
 
     return response
