@@ -191,3 +191,54 @@ WBLogistic_SealsTeam/
 ├── .gitignore
 └── .github/workflows/ci.yml
 ```
+
+## Быстрая проверка работы сервиса
+
+### Шаг 1 — убедиться что стек запущен
+
+Bash
+```
+docker compose ps
+```
+
+### Шаг 2 — отправить данные через Java
+
+Bash
+```
+curl -s -X POST http://localhost:8080/api/v1/ingest-data \
+  -H "Content-Type: application/json" \
+  -d '{
+    "officeFromId": 4,
+    "routeId": 29,
+    "timestamp": 1740787200000,
+    "status1": 3105,
+    "status2": 340,
+    "status3": 2160,
+    "status4": 484,
+    "status5": 4018,
+    "status6": 3462,
+    "status7": 0,
+    "status8": 0
+  }' | python3 -m json.tool
+```
+
+Используем officeFromId=4, routeId=29 — реальные значения из датасета, Prophet должен дать нормальный прогноз.
+
+### Шаг 3 — получить расписание
+
+Bash
+```
+curl -s "http://localhost:8080/api/v1/schedule?warehouseId=4" | python3 -m json.tool
+```
+
+### Шаг 4 — открыть фронтенд
+
+В браузере:
+http://localhost:3000
+
+
+## Замечания
+Сервис сделан для работы с реальными API и в связке с реальными данными WB. В рамках
+хакатона это значит наличие заглушек и упрощений для более правдоподобной и
+удобной демонстрации итогового продукта.
+Спасибо!
