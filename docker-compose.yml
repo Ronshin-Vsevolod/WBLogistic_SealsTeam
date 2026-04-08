@@ -38,16 +38,14 @@ services:
       ml-service:
         condition: service_started
 
-  # Flet: UI диспетчера (ходит в Java backend)
-  frontend:
+  # New React Backend UI (Premium dashboard)
+  frontend-web:
     build:
-      context: .
-      dockerfile: Dockerfile.flet
-    command: flet run src/frontend_ui/app.py --port 8550
-    ports: ["8550:8550"]
-    environment:
-      API_BASE_URL: http://backend:8080/api/v1
-    depends_on: [backend]
+      context: ./frontend-web
+      dockerfile: Dockerfile
+    ports: ["3000:3000"]
+    depends_on:
+      - backend
 
 volumes:
   pgdata:

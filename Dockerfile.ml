@@ -15,7 +15,10 @@ RUN pip install --no-cache-dir --upgrade pip && \
         "uvicorn[standard]>=0.29.0" \
         "pydantic>=2.6.0" \
         "pydantic-settings>=2.2.0" \
-        "pyyaml>=6.0.1"
+        "pyyaml>=6.0.1" \
+        "joblib>=1.3.0" \
+        "numpy>=1.26.0" \
+        "pandas>=2.1.0"
 
 COPY src /app/src
 COPY config /app/config
