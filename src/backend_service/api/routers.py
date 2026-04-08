@@ -123,10 +123,10 @@ def _background_log_inference(
     inference_ms: float,
 ) -> None:
     """Background task: serialise and persist the inference payload.
-    
-    Captures intermediate pipeline state (macro baseline, and the full 
-    micro forecast distributions: mean, lower, upper) that is invisible 
-    in the public API contract. This is critical for offline ML analysis.
+
+    Captures intermediate pipeline state (macro baseline and the full
+    micro forecast distribution: mean / lower / upper) that is not
+    exposed in the public API response.
     """
     try:
         fl = get_feature_logger()
@@ -136,17 +136,12 @@ def _background_log_inference(
             pipeline_state={
                 "macro_daily_baseline": macro_daily_baseline,
                 "daily_forecast": daily_forecast,
-                "micro_forecast": micro_forecast,
-            },
-            inference_duration_ms=inference_ms,
-        )
-        pipeline_state={
-                "macro_daily_baseline": macro_daily_baseline,
-                "daily_forecast": daily_forecast,
                 "micro_forecast_mean": micro_forecast_mean,
                 "micro_forecast_lower": micro_forecast_lower,
                 "micro_forecast_upper": micro_forecast_upper,
             },
+            inference_duration_ms=inference_ms,
+        )
     except Exception:
         logger.warning("Feature logging background task failed", exc_info=True)
 
