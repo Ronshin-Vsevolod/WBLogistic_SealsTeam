@@ -16,10 +16,8 @@ from __future__ import annotations
 
 import logging
 import time
-from datetime import date, datetime
 
 from fastapi import APIRouter, BackgroundTasks
-from pydantic import BaseModel, ConfigDict, Field
 
 from backend_service.engine.forecaster_macro import predict_macro
 from backend_service.engine.forecaster_micro import predict_micro
@@ -29,46 +27,18 @@ from backend_service.engine.auto_dispatcher import (
     generate_dispatches,
     build_tactical_plan,
 )
-from backend_service.api.schemas import ForecastRequest
+from backend_service.api.schemas import (
+    ForecastRequest,
+    ForecastResponse,
+    DispatchEntry,
+    TacticalPlanEntry,
+)
 from backend_service.core.config import get_settings
 from backend_service.core.feature_logger import get_feature_logger
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-# ═══════════════════════════════════════════════════════════════════
-#  Response schemas (camelCase aliases → Java contract)
-# ═══════════════════════════════════════════════════════════════════
-
-
-class _DispatchItem(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    warehouse_id: str = Field(alias="warehouseId")
-    route_id: int = Field(alias="routeId")
-    scheduled_at: datetime = Field(alias="scheduledAt")
-    vehicle_type: str = Field(alias="vehicleType")
-    expected_volume: float = Field(alias="expectedVolume")
-    vehicle_capacity: float = Field(alias="vehicleCapacity")
-    fill_rate: float = Field(alias="fillRate")
-    trigger_reason: str = Field(alias="triggerReason")
-    priority: int
-
-
-class _TacticalPlanItem(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    warehouse_id: str = Field(alias="warehouseId")
-    plan_date: date = Field(alias="planDate")
-    forecast_volume: float = Field(alias="forecastVolume")
-    required_trucks: int = Field(alias="requiredTrucks")
-
-
-class PredictResponse(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    dispatches: list[_DispatchItem]
-    tactical_plan: list[_TacticalPlanItem] = Field(alias="tacticalPlan")
 
 # ═══════════════════════════════════════════════════════════════════
 #  Internal helpers — request unpacking & response mapping
@@ -83,9 +53,9 @@ def _extract_statuses(req: ForecastRequest) -> list[float]:
     ]
 
 
-def _map_dispatch(d: _EngineDispatch) -> _DispatchItem:
+def _map_dispatch(d: _EngineDispatch) -> DispatchEntry:
     """Engine dataclass → API response model (camelCase via alias)."""
-    return _DispatchItem(
+    return DispatchEntry(
         warehouse_id=d.warehouse_id,
         route_id=d.route_id,
         scheduled_at=d.scheduled_at,
@@ -98,14 +68,15 @@ def _map_dispatch(d: _EngineDispatch) -> _DispatchItem:
     )
 
 
-def _map_tactical(t: _EngineTacticalRow) -> _TacticalPlanItem:
+def _map_tactical(t: _EngineTacticalRow) -> TacticalPlanEntry:
     """Engine dataclass → API response model (camelCase via alias)."""
-    return _TacticalPlanItem(
+    return TacticalPlanEntry(
         warehouse_id=t.warehouse_id,
         plan_date=t.plan_date,
         forecast_volume=t.forecast_volume,
         required_trucks=t.required_trucks,
     )
+
 
 # ═══════════════════════════════════════════════════════════════════
 #  Background logging helper
@@ -114,7 +85,7 @@ def _map_tactical(t: _EngineTacticalRow) -> _TacticalPlanItem:
 
 def _background_log_inference(
     request: ForecastRequest,
-    response: PredictResponse,
+    response: ForecastResponse,
     macro_daily_baseline: float,
     daily_forecast: list[float],
     micro_forecast_mean: list[float],
@@ -122,12 +93,7 @@ def _background_log_inference(
     micro_forecast_upper: list[float],
     inference_ms: float,
 ) -> None:
-    """Background task: serialise and persist the inference payload.
-
-    Captures intermediate pipeline state (macro baseline and the full
-    micro forecast distribution: mean / lower / upper) that is not
-    exposed in the public API response.
-    """
+    """Background task: serialise and persist the inference payload."""
     try:
         fl = get_feature_logger()
         fl.log_inference(
@@ -153,16 +119,15 @@ def _background_log_inference(
 
 @router.get("/health")
 async def health() -> dict[str, str]:
-    """Liveness probe — smoke tests, Docker healthchecks, and quick
-    verification before calling ``/predict``."""
+    """Liveness probe."""
     return {"status": "ok"}
 
 
-@router.post("/predict", response_model=PredictResponse)
+@router.post("/predict", response_model=ForecastResponse)
 async def predict(
     request: ForecastRequest,
     background_tasks: BackgroundTasks,
-) -> PredictResponse:
+) -> ForecastResponse:
     """Run the full forecast → dispatch pipeline.
 
     Orchestration order
@@ -184,10 +149,9 @@ async def predict(
         macro_weather=request.integrations.macro_weather,
         promo=request.integrations.promo,
         timestamp=request.timestamp,
+        office_from_id=request.office_from_id,
         runtime_mode="auto",
     )
-    # macro_result.macro_daily_baseline is internal pipeline state
-    # and must NOT appear in the public response.
 
     # ── 2. Micro forecast ───────────────────────────────────────
     micro_result = predict_micro(
@@ -222,7 +186,7 @@ async def predict(
     )
 
     # ── 5. Map to API response models ───────────────────────────
-    response = PredictResponse(
+    response = ForecastResponse(
         dispatches=[_map_dispatch(d) for d in engine_dispatches],
         tactical_plan=[_map_tactical(t) for t in engine_plan],
     )
@@ -242,6 +206,5 @@ async def predict(
         micro_forecast_upper=micro_result.upper,
         inference_ms=inference_ms,
     )
-
 
     return response

@@ -12,16 +12,25 @@ services:
       interval: 5s
       retries: 5
 
-  # Python: ML-модели + Decision Engine
+  # Python: ML-models + Decision Engine
   ml-service:
     build:
       context: .
       dockerfile: Dockerfile.ml
-    command: uvicorn src.backend_service.main:app --host 0.0.0.0 --port 8000
     ports: ["8000:8000"]
     volumes: ["./models:/app/models"]
+    healthcheck:
+      test:
+        [
+          "CMD", "python", "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2).read()"
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 15s
 
-  # Java: персистентность + REST API
+  # Java: persistent + REST API
   backend:
     build: ./backend-java
     ports: ["8080:8080"]
