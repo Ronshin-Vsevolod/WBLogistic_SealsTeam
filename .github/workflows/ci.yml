@@ -2,7 +2,7 @@ name: WBLogistic CI/CD Pipeline
 
 on:
   push:
-    branches: [ "main", "basic" ]
+    branches: [ "main", "vronshin/basic" ]
   pull_request:
     branches: [ "main" ]
 
