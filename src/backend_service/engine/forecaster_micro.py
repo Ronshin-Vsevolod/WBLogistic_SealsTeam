@@ -8,6 +8,7 @@ from typing import Any
 
 import joblib
 import numpy as np
+import warnings
 """Micro-level intra-day demand forecaster.
 
 Architecture
@@ -152,40 +153,64 @@ def _build_micro_raw_features(
     traffic: float,
     micro_weather: list[float],
     macro_daily_baseline: float,
-):
-    import pandas as pd
+) -> np.ndarray:
+    """Build a single-row numpy object array matching the training schema.
 
-    row: dict[str, Any] = {}
+    Model was trained on numpy arrays with positional feature names '0'..'16'.
+    Columns 0 (office_from_id) and 1 (route_id) must be strings — CatBoost
+    inferred cat_feature_indices=[0,1] from object dtype during training.
+    All other columns are float.
 
-    if _feature_enabled("office_from_id"):
-        row["office_from_id"] = office_from_id
+    Column order must exactly match micro_feature_schema.json:
+        office_from_id, route_id, status_1..8,
+        macro_daily_baseline, traffic, micro_weather_0..4
+    """
+    if _feature_cols is None:
+        raise RuntimeError("Feature schema not loaded")
 
-    if _feature_enabled("route_id"):
-        row["route_id"] = route_id
+    values: dict[str, object] = {}
+
+    values["office_from_id"] = str(office_from_id)
+    values["route_id"] = str(route_id)
 
     for i, value in enumerate(statuses[:8], start=1):
-        col = f"status_{i}"
-        if _feature_enabled(col):
-            row[col] = float(value)
+        values[f"status_{i}"] = float(value)
 
-    if _feature_enabled("traffic"):
-        row["traffic"] = float(traffic)
+    values["macro_daily_baseline"] = float(macro_daily_baseline)
+    values["traffic"] = float(traffic)
 
     for i in range(5):
-        col = f"micro_weather_{i}"
-        if _feature_enabled(col):
-            row[col] = float(micro_weather[i]) if i < len(micro_weather) else 0.0
+        values[f"micro_weather_{i}"] = float(micro_weather[i]) if i < len(micro_weather) else 0.0
 
-    if _feature_enabled("macro_daily_baseline"):
-        row["macro_daily_baseline"] = float(macro_daily_baseline)
+    # Build row in exact schema order
+    row = [values[col] for col in _feature_cols if col in values]
 
-    df = pd.DataFrame([row])
+    return np.array([row], dtype=object)
 
-    for col in ("office_from_id", "route_id"):
-        if col in df.columns:
-            df[col] = df[col].astype("category")
 
-    return df
+def _predict_chain_manual(chain, X: np.ndarray) -> np.ndarray:
+    """Run RegressorChain inference manually to preserve object dtype.
+
+    RegressorChain.predict() passes data through sklearn's validate_data()
+    which converts object arrays to float64, breaking CatBoost cat_features.
+    We replicate the chain logic directly: each estimator gets X augmented
+    with all previous predictions appended as new columns.
+    """
+    X_curr = X.copy()
+    predictions = []
+
+    for estimator in chain.estimators_:
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message="X does not have valid feature names",
+                category=UserWarning,
+            )
+            pred = estimator.predict(X_curr)
+        predictions.append(pred[0])
+        X_curr = np.hstack([X_curr, pred.reshape(-1, 1)])
+
+    return np.array(predictions, dtype=np.float32)
 
 
 def _predict_micro_raw_ml(
@@ -215,8 +240,8 @@ def _predict_micro_raw_ml(
             macro_daily_baseline=macro_daily_baseline,
         )
 
-        pred_cat = np.asarray(_model_cat.predict(X), dtype=np.float32).reshape(-1)[:10]
-        pred_lgbm = np.asarray(_model_lgbm.predict(X), dtype=np.float32).reshape(-1)[:10]
+        pred_cat = _predict_chain_manual(_model_cat, X)
+        pred_lgbm = _predict_chain_manual(_model_lgbm, X)
 
         mean_pred = ((pred_cat + pred_lgbm) / 2.0) * _best_k
         mean_pred = np.maximum(mean_pred, 0.0)

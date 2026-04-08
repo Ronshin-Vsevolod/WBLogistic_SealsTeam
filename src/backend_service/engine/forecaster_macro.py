@@ -92,6 +92,13 @@ def _predict_macro_raw_ml(
         if len(raw_daily) != 7:
             raise ValueError(f"Prophet returned {len(raw_daily)} rows, expected 7")
 
+        if all(v == 0.0 for v in raw_daily):
+            logger.warning(
+                "Prophet returned all non-positive values for office_from_id=%s — stub fallback",
+                office_from_id,
+            )
+            return None
+
         logger.info("Macro ML inference OK for office_from_id=%s", office_from_id)
         return raw_daily
 
