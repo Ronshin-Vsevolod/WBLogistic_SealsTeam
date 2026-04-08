@@ -2,9 +2,9 @@ name: WBLogistic CI/CD Pipeline
 
 on:
   push:
-    branches: [ "main", "release/*" ]
+    branches: [ "main", "basic" ]
   pull_request:
-    branches: [ "main", "release/*" ]
+    branches: [ "main" ]
 
 jobs:
   # 1. Java Backend Compilation
