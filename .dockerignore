@@ -19,5 +19,6 @@ models/
 notebooks/
 
 backend-java/
-
+frontend-web/node_modules/
+frontend-web/dist/
 *.log

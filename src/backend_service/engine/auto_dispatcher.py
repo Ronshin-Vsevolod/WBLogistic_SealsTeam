@@ -35,7 +35,7 @@ class DispatchRequest:
     vehicle_capacity: float
     fill_rate: float
     trigger_reason: str
-    priority: str            # NORMAL | HIGH
+    priority: int
 
 
 @dataclass

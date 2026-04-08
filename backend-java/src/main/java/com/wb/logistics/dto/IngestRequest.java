@@ -19,7 +19,6 @@ public record IngestRequest(
         @Positive
         Integer routeId,
 
-        /** Epoch-миллисекунды (как в parquet-данных). */
         @NotNull
         Long timestamp,
 
