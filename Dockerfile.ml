@@ -18,7 +18,7 @@ RUN pip install --no-cache-dir --upgrade pip && \
         "pyyaml>=6.0.1" \
         "joblib>=1.3.0" \
         "numpy>=1.26.0" \
-        "pandas>=2.1.0"
+        "pandas>=2.1.0" \
         "polars>=1.0.0" \
         "numpy>=1.26.0" \
         "catboost>=1.2.0" \
