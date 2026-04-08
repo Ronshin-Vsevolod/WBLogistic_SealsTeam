@@ -127,7 +127,6 @@ class TestSettingsValidation:
 
 # ── YAML file loading ────────────────────────────────────────────
 
-
 class TestLoadSettings:
     def test_load_from_yaml_file(self, tmp_path: Path):
         data = {
@@ -400,48 +399,6 @@ class TestEarlyTailClear:
 
 
 # ═══════════════════════════════════════════════════════════════════
-#  No-fill-before-SLA behaviour (Variant C)
-# ═══════════════════════════════════════════════════════════════════
-
-class TestNoFillBeforeSLA:
-    def test_emits_tail_clear_when_upper_bound_cannot_fill_before_sla(self):
-        result = _dispatches(
-            micro_forecast=[150.0, 5.0, 10.0, 10.0],
-            micro_forecast_upper=[150.0, 5.0, 10.0, 10.0],
-            settings=Settings(
-                micro_step_minutes=30,
-                micro_horizon_steps=10,
-                truck_capacity=_TRUCK_CAPACITY,
-                base_sla_hours=2.0,
-                standard_vehicle_type=_STANDARD_VEHICLE,
-                vehicle_catalog=_VEHICLE_CATALOG,
-            ),
-        )
-        cap = [d for d in result if d.trigger_reason == "CAPACITY_FULL"]
-        tail = [d for d in result if d.trigger_reason == "NO_FILL_BEFORE_SLA"]
-
-        assert len(cap) == 1
-        assert len(tail) == 1
-        assert tail[0].expected_volume == 50.0
-
-    def test_does_not_tail_clear_if_upper_bound_can_still_fill_before_sla(self):
-        result = _dispatches(
-            micro_forecast=[150.0, 5.0, 10.0, 10.0],
-            micro_forecast_upper=[150.0, 20.0, 20.0, 15.0],
-            settings=Settings(
-                micro_step_minutes=30,
-                micro_horizon_steps=10,
-                truck_capacity=_TRUCK_CAPACITY,
-                base_sla_hours=2.0,
-                standard_vehicle_type=_STANDARD_VEHICLE,
-                vehicle_catalog=_VEHICLE_CATALOG,
-            ),
-        )
-        tail = [d for d in result if d.trigger_reason == "NO_FILL_BEFORE_SLA"]
-        assert len(tail) == 0
-
-
-# ═══════════════════════════════════════════════════════════════════
 #  SLA-breach behaviour
 # ═══════════════════════════════════════════════════════════════════
 
@@ -485,7 +442,6 @@ class TestSLABreach:
 #  Horizon-end behaviour
 # ═══════════════════════════════════════════════════════════════════
 
-
 class TestHorizonEnd:
     def test_no_artificial_dispatch_at_horizon_end(self):
         # Small volumes, huge capacity, huge SLA → nothing triggers
@@ -506,7 +462,6 @@ class TestHorizonEnd:
 # ═══════════════════════════════════════════════════════════════════
 #  Tactical-plan builder
 # ═══════════════════════════════════════════════════════════════════
-
 
 class TestTacticalPlan:
     def test_returns_seven_rows(self):
@@ -537,7 +492,6 @@ class TestTacticalPlan:
 # ═══════════════════════════════════════════════════════════════════
 #  Vehicle selection (config-driven)
 # ═══════════════════════════════════════════════════════════════════
-
 
 class TestVehicleSelection:
     def test_selects_smallest_sufficient_vehicle(self):

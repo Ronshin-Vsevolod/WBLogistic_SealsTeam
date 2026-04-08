@@ -35,12 +35,14 @@ _CAT_PATH = _MODEL_DIR / "micro_chain_catboost.cbm"
 _LGBM_PATH = _MODEL_DIR / "micro_chain_lightgbm.txt"
 _K_PATH = _MODEL_DIR / "best_k_multiplier.json"
 _UNCERTAINTY_PATH = _MODEL_DIR / "micro_uncertainty_profile.json"
+_SCHEMA_PATH = _MODEL_DIR / "micro_feature_schema.json"
 
 _models_loaded = False
 _model_cat: Any | None = None
 _model_lgbm: Any | None = None
 _best_k: np.ndarray | None = None
 _margins: np.ndarray | None = None
+_feature_cols: list[str] | None = None
 
 
 @dataclass
@@ -80,13 +82,19 @@ def _interpolate_control(control_hours: list[float], control_values: list[float]
 
 
 def _load_models() -> bool:
-    global _models_loaded, _model_cat, _model_lgbm, _best_k, _margins
+    global _models_loaded, _model_cat, _model_lgbm, _best_k, _margins, _feature_cols
 
     if _models_loaded:
         return _model_cat is not None
 
     try:
-        if not (_CAT_PATH.exists() and _LGBM_PATH.exists() and _K_PATH.exists() and _UNCERTAINTY_PATH.exists()):
+        if not (
+            _CAT_PATH.exists()
+            and _LGBM_PATH.exists()
+            and _K_PATH.exists()
+            and _UNCERTAINTY_PATH.exists()
+            and _SCHEMA_PATH.exists()
+        ):
             logger.info("Micro ML artifacts not found — stub fallback will be used")
             _models_loaded = True
             return False
@@ -100,40 +108,96 @@ def _load_models() -> bool:
 
         with open(_UNCERTAINTY_PATH, encoding="utf-8") as fh:
             m_raw = json.load(fh)
-        _margins = np.array([m_raw[f"p90_abs_error_step_{i+1}"] for i in range(10)], dtype=np.float32)
+        _margins = np.array(
+            [m_raw[f"p90_abs_error_step_{i+1}"] for i in range(10)],
+            dtype=np.float32,
+        )
+
+        with open(_SCHEMA_PATH, encoding="utf-8") as fh:
+            _feature_cols = json.load(fh)
 
         _models_loaded = True
-        logger.info("Micro ML artifacts loaded successfully")
+        logger.info(
+            "Micro ML artifacts loaded successfully | features=%d",
+            len(_feature_cols or []),
+        )
         return True
     except Exception:
         logger.warning("Failed to load micro ML artifacts", exc_info=True)
         _models_loaded = True
+        _model_cat = None
+        _model_lgbm = None
+        _best_k = None
+        _margins = None
+        _feature_cols = None
         return False
 
 
-def _build_micro_raw_features(*, statuses: list[float], timestamp: int, office_from_id: int, route_id: int):
-    import pandas as pd
-    from datetime import datetime, timezone
+def _feature_enabled(name: str) -> bool:
+    return _feature_cols is not None and name in _feature_cols
 
-    dt = datetime.fromtimestamp(timestamp / 1000.0, tz=timezone.utc)
-    row: dict[str, Any] = {
-        "office_from_id": office_from_id,
-        "route_id": route_id,
-        "hour": dt.hour,
-        "day_of_week": dt.weekday(),
-        "is_weekend": int(dt.weekday() >= 5),
-    }
+def _model_uses_weather_features() -> bool:
+    return any(_feature_enabled(f"micro_weather_{i}") for i in range(5))
+
+def _model_uses_traffic_feature() -> bool:
+    return _feature_enabled("traffic")
+
+
+def _build_micro_raw_features(
+    *,
+    statuses: list[float],
+    timestamp: int,
+    office_from_id: int,
+    route_id: int,
+    traffic: float,
+    micro_weather: list[float],
+    macro_daily_baseline: float,
+):
+    import pandas as pd
+
+    row: dict[str, Any] = {}
+
+    if _feature_enabled("office_from_id"):
+        row["office_from_id"] = office_from_id
+
+    if _feature_enabled("route_id"):
+        row["route_id"] = route_id
+
     for i, value in enumerate(statuses[:8], start=1):
-        row[f"status_{i}"] = float(value)
+        col = f"status_{i}"
+        if _feature_enabled(col):
+            row[col] = float(value)
+
+    if _feature_enabled("traffic"):
+        row["traffic"] = float(traffic)
+
+    for i in range(5):
+        col = f"micro_weather_{i}"
+        if _feature_enabled(col):
+            row[col] = float(micro_weather[i]) if i < len(micro_weather) else 0.0
+
+    if _feature_enabled("macro_daily_baseline"):
+        row["macro_daily_baseline"] = float(macro_daily_baseline)
 
     df = pd.DataFrame([row])
+
     for col in ("office_from_id", "route_id"):
         if col in df.columns:
             df[col] = df[col].astype("category")
+
     return df
 
 
-def _predict_micro_raw_ml(statuses: list[float], micro_horizon_steps: int, timestamp: int | None, office_from_id: int | None, route_id: int | None) -> MicroForecastResult | None:
+def _predict_micro_raw_ml(
+    statuses: list[float],
+    micro_weather: list[float],
+    traffic: float,
+    macro_daily_baseline: float,
+    micro_horizon_steps: int,
+    timestamp: int | None,
+    office_from_id: int | None,
+    route_id: int | None,
+) -> MicroForecastResult | None:
     if micro_horizon_steps != 10 or timestamp is None or office_from_id is None or route_id is None:
         return None
 
@@ -141,7 +205,15 @@ def _predict_micro_raw_ml(statuses: list[float], micro_horizon_steps: int, times
         return None
 
     try:
-        X = _build_micro_raw_features(statuses=statuses, timestamp=timestamp, office_from_id=office_from_id, route_id=route_id)
+        X = _build_micro_raw_features(
+            statuses=statuses,
+            timestamp=timestamp,
+            office_from_id=office_from_id,
+            route_id=route_id,
+            traffic=traffic,
+            micro_weather=micro_weather,
+            macro_daily_baseline=macro_daily_baseline,
+        )
 
         pred_cat = np.asarray(_model_cat.predict(X), dtype=np.float32).reshape(-1)[:10]
         pred_lgbm = np.asarray(_model_lgbm.predict(X), dtype=np.float32).reshape(-1)[:10]
@@ -218,8 +290,16 @@ def predict_micro(
     """
     raw_result = None
     if runtime_mode != "stub":
-        raw_result = _predict_micro_raw_ml(statuses, micro_horizon_steps, timestamp, office_from_id, route_id)
-
+        raw_result = _predict_micro_raw_ml(
+            statuses=statuses,
+            micro_weather=micro_weather,
+            traffic=traffic,
+            macro_daily_baseline=macro_daily_baseline,
+            micro_horizon_steps=micro_horizon_steps,
+            timestamp=timestamp,
+            office_from_id=office_from_id,
+            route_id=route_id,
+        )
     if raw_result is None:
         raw_result = _predict_micro_raw_stub(statuses, macro_daily_baseline, micro_horizon_steps, micro_step_minutes)
 

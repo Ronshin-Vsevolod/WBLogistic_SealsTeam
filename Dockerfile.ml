@@ -19,9 +19,17 @@ RUN pip install --no-cache-dir --upgrade pip && \
         "joblib>=1.3.0" \
         "numpy>=1.26.0" \
         "pandas>=2.1.0"
+        "polars>=1.0.0" \
+        "numpy>=1.26.0" \
+        "catboost>=1.2.0" \
+        "lightgbm>=4.1.0" \
+        "scikit-learn>=1.4.0" \
+        "joblib>=1.3.0"
+
 
 COPY src /app/src
 COPY config /app/config
+COPY models /app/models
 
 RUN mkdir -p /app/data/feature_logs
 
