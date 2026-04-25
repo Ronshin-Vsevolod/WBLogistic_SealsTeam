@@ -1,9 +1,9 @@
-# WBLogistic_SealsTeam
+# TransportAutoDispatch
 
 ## File Structure
 
 ```bash
-WBLogistic_SealsTeam/
+TransportAutoDispatch/
 ├── data/                                    # Сырые данные (.gitignore)
 │   ├── train_team_track.parquet
 │   └── test_team_track.parquet
