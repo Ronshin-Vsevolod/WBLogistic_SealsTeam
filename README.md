@@ -1,4 +1,4 @@
-# WBLogistic_SealsTeam
+# TransportAutoDispatch
 
 Automated Transportation Dispatch System and Logistics Operations Dashboard. 
 The system provides a real-time view of warehouse operations, AI-based micro dispatching (SLA control, fill rates), and macro tactical planning (forecasts and truck requirements).
@@ -52,7 +52,7 @@ The pipeline performs:
 ## File Structure
 
 ```bash
-WBLogistic_SealsTeam/
+TransportAutoDispatch/
 ├── data/                                    # Raw datasets
 ├── docs/                                    # Documentation and media
 ├── models/                                  # ML Model weights
@@ -239,6 +239,6 @@ http://localhost:3000
 
 ## Замечания
 Сервис сделан для работы с реальными API и в связке с реальными данными WB. В рамках
-хакатона это значит наличие заглушек и упрощений для более правдоподобной и
+хакатона / учебного проекта это значит наличие заглушек и упрощений для более правдоподобной и
 удобной демонстрации итогового продукта.
 Спасибо!
